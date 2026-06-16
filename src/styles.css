@@ -3881,24 +3881,38 @@ a {
   color: white;
   display: grid;
   gap: 12px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
   padding: 18px 16px 12px;
 }
 
 .broadcast-whatsapp-bubble p {
   line-height: 1.48;
   margin: 0;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .broadcast-whatsapp-bubble small {
   color: rgb(218 255 246 / .72);
   line-height: 1.35;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .broadcast-preview-buttons {
   border-top: 1px solid rgb(255 255 255 / .15);
   display: grid;
   margin: 2px -16px 0;
+  max-width: calc(100% + 32px);
+  min-width: 0;
+  overflow: hidden;
 }
 
 .broadcast-preview-buttons button {
@@ -3913,7 +3927,11 @@ a {
   gap: 6px;
   justify-content: center;
   min-height: 38px;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 10px 12px;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .broadcast-whatsapp-bubble time {
