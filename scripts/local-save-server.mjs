@@ -121,6 +121,10 @@ async function runSqlite(args) {
   }
 }
 
+function sqlValue(value) {
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
 async function ensureDatabase() {
   const result = await runSqlite([
     "create table if not exists app_storage (key text primary key, value text not null, updated_at text not null);",
@@ -130,7 +134,7 @@ async function ensureDatabase() {
 
 async function getStoredValue(key) {
   if (await ensureDatabase()) {
-    const output = await runSqlite(["-json", "select value from app_storage where key = ? limit 1;", key]);
+    const output = await runSqlite(["-json", `select value from app_storage where key = ${sqlValue(key)} limit 1;`]);
     const rows = output ? JSON.parse(output || "[]") : [];
     return rows[0]?.value ? JSON.parse(rows[0].value) : null;
   }
@@ -142,10 +146,7 @@ async function getStoredValue(key) {
 async function setStoredValue(key, value) {
   if (await ensureDatabase()) {
     await runSqlite([
-      "insert into app_storage (key, value, updated_at) values (?, ?, ?) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at;",
-      key,
-      JSON.stringify(value),
-      new Date().toISOString(),
+      `insert into app_storage (key, value, updated_at) values (${sqlValue(key)}, ${sqlValue(JSON.stringify(value))}, ${sqlValue(new Date().toISOString())}) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at;`,
     ]);
     return;
   }
