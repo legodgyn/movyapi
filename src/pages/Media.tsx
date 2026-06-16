@@ -2,7 +2,6 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, FileAudio, FileImage, FileVideo, Image, Trash2, Upload } from "lucide-react";
 import { config } from "../lib/config";
 import { formatBytes, formatDate, labelOf } from "../lib/format";
-import { readPersistentValue, writePersistentValue } from "../lib/persistentStorage";
 import type { MediaItem } from "../lib/types";
 
 type LocalMediaItem = MediaItem & {
@@ -12,11 +11,41 @@ type LocalMediaItem = MediaItem & {
 const MEDIA_LIBRARY_KEY = "movy.mediaLibrary";
 
 function backendUrl() {
-  return config.localBackendUrl.replace(/\/$/, "");
+  const configured = config.mediaBackendUrl || config.localBackendUrl;
+  if (/^https?:\/\//i.test(configured)) return configured.replace(/\/$/, "");
+  const origin =
+    typeof window !== "undefined" && window.location.origin && !window.location.origin.includes("localhost")
+      ? window.location.origin
+      : config.publicAppUrl;
+  return `${origin.replace(/\/$/, "")}/${configured.replace(/^\/+|\/+$/g, "")}`;
+}
+
+function absoluteMediaUrl(value?: string) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith("/local-api/")) return `${config.publicAppUrl.replace(/\/$/, "")}${url}`;
+  if (url.startsWith("/media/files/")) return `${backendUrl()}${url}`;
+  if (url.startsWith("/")) return `${backendUrl()}${url}`;
+  return url;
 }
 
 function mediaUrl(item: LocalMediaItem) {
-  return item.public_url || item.url || "";
+  return absoluteMediaUrl(item.public_url || item.url || item.storagePath);
+}
+
+function normalizeMediaItem(item: LocalMediaItem): LocalMediaItem {
+  const storagePath =
+    item.storagePath ||
+    String(item.url || item.public_url || "").match(/\/media\/files\/[^?#]+/)?.[0] ||
+    "";
+  const url = mediaUrl({ ...item, storagePath });
+  return {
+    ...item,
+    storagePath,
+    url,
+    public_url: url,
+  };
 }
 
 function mediaKind(type?: string) {
@@ -62,6 +91,31 @@ async function uploadToLocalBackend(file: File) {
   return payload as { path: string; filename: string; type: string; size: number };
 }
 
+async function readMediaLibrary() {
+  try {
+    const response = await fetch(`${backendUrl()}/storage/${encodeURIComponent(MEDIA_LIBRARY_KEY)}`);
+    const payload = await response.json().catch(() => ({}));
+    const value = Array.isArray(payload.value) ? payload.value : [];
+    localStorage.setItem(MEDIA_LIBRARY_KEY, JSON.stringify(value));
+    return value as LocalMediaItem[];
+  } catch {
+    try {
+      return JSON.parse(localStorage.getItem(MEDIA_LIBRARY_KEY) || "[]") as LocalMediaItem[];
+    } catch {
+      return [];
+    }
+  }
+}
+
+async function writeMediaLibrary(value: LocalMediaItem[]) {
+  localStorage.setItem(MEDIA_LIBRARY_KEY, JSON.stringify(value));
+  await fetch(`${backendUrl()}/storage/${encodeURIComponent(MEDIA_LIBRARY_KEY)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value }),
+  }).catch(() => null);
+}
+
 export function Media() {
   const [activeTab, setActiveTab] = useState<"upload" | "library">("upload");
   const [items, setItems] = useState<LocalMediaItem[]>([]);
@@ -78,13 +132,18 @@ export function Media() {
   );
 
   async function load() {
-    const list = await readPersistentValue<LocalMediaItem[]>(MEDIA_LIBRARY_KEY, []);
-    setItems(Array.isArray(list) ? list : []);
+    const list = await readMediaLibrary();
+    const normalized = Array.isArray(list) ? list.map(normalizeMediaItem) : [];
+    setItems(normalized);
+    if (JSON.stringify(list) !== JSON.stringify(normalized)) {
+      await writeMediaLibrary(normalized);
+    }
   }
 
   async function persist(nextItems: LocalMediaItem[]) {
-    setItems(nextItems);
-    await writePersistentValue(MEDIA_LIBRARY_KEY, nextItems);
+    const normalized = nextItems.map(normalizeMediaItem);
+    setItems(normalized);
+    await writeMediaLibrary(normalized);
   }
 
   async function uploadFiles(files: File[]) {
@@ -97,7 +156,7 @@ export function Media() {
     for (const file of files) {
       try {
         const uploaded = await uploadToLocalBackend(file);
-        const remoteUrl = `${backendUrl()}${uploaded.path}`;
+        const remoteUrl = absoluteMediaUrl(uploaded.path);
         created.push({
           id: `media-${crypto.randomUUID()}`,
           name: file.name,
