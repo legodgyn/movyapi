@@ -1,8 +1,10 @@
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 
 function loadDotEnv() {
   const envPath = join(process.cwd(), ".env");
@@ -20,14 +22,13 @@ function loadDotEnv() {
 
 loadDotEnv();
 
+const execFileAsync = promisify(execFile);
 const port = Number(process.env.SCALEAPI_SAVE_PORT ?? 5174);
 const host = process.env.SCALEAPI_SAVE_HOST || "127.0.0.1";
 const downloadsDir = join(homedir(), "Downloads");
 const checkNumberApiKey = process.env.CHECKNUMBER_API_KEY || "";
 const metaWebhookVerifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN || "";
-const supabaseUrl = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const supabaseStorageTable = process.env.SUPABASE_KV_TABLE || "movy_app_storage";
+const databasePath = process.env.MOVY_DB_PATH || join(process.cwd(), "data", "movyapi.sqlite");
 const storageFilePath = process.env.MOVY_STORAGE_FILE || join(process.cwd(), "data", "storage.json");
 const checkNumberBaseUrl = "https://api.checknumber.ai/v1";
 const whatsappStatuses = new Map();
@@ -106,17 +107,32 @@ async function writeFileStorage(store) {
   await writeFile(storageFilePath, JSON.stringify(store, null, 2), "utf8");
 }
 
-async function getStoredValue(key) {
-  if (supabaseUrl && supabaseServiceRoleKey) {
-    const response = await fetch(`${supabaseUrl}/rest/v1/${supabaseStorageTable}?key=eq.${encodeURIComponent(key)}&select=value`, {
-      headers: {
-        apikey: supabaseServiceRoleKey,
-        Authorization: `Bearer ${supabaseServiceRoleKey}`,
-      },
+async function runSqlite(args) {
+  await mkdir(dirname(databasePath), { recursive: true });
+  try {
+    const { stdout } = await execFileAsync("sqlite3", [databasePath, ...args], {
+      maxBuffer: 10 * 1024 * 1024,
+      windowsHide: true,
     });
-    const data = await response.json().catch(() => []);
-    if (!response.ok) throw new Error(data?.message || `Supabase retornou HTTP ${response.status}`);
-    return Array.isArray(data) && data[0] ? data[0].value : null;
+    return stdout;
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function ensureDatabase() {
+  const result = await runSqlite([
+    "create table if not exists app_storage (key text primary key, value text not null, updated_at text not null);",
+  ]);
+  return result !== null;
+}
+
+async function getStoredValue(key) {
+  if (await ensureDatabase()) {
+    const output = await runSqlite(["-json", "select value from app_storage where key = ? limit 1;", key]);
+    const rows = output ? JSON.parse(output || "[]") : [];
+    return rows[0]?.value ? JSON.parse(rows[0].value) : null;
   }
 
   const store = await readFileStorage();
@@ -124,19 +140,13 @@ async function getStoredValue(key) {
 }
 
 async function setStoredValue(key, value) {
-  if (supabaseUrl && supabaseServiceRoleKey) {
-    const response = await fetch(`${supabaseUrl}/rest/v1/${supabaseStorageTable}`, {
-      body: JSON.stringify({ key, value, updated_at: new Date().toISOString() }),
-      headers: {
-        apikey: supabaseServiceRoleKey,
-        Authorization: `Bearer ${supabaseServiceRoleKey}`,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates,return=minimal",
-      },
-      method: "POST",
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data?.message || `Supabase retornou HTTP ${response.status}`);
+  if (await ensureDatabase()) {
+    await runSqlite([
+      "insert into app_storage (key, value, updated_at) values (?, ?, ?) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at;",
+      key,
+      JSON.stringify(value),
+      new Date().toISOString(),
+    ]);
     return;
   }
 
