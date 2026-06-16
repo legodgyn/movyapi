@@ -1062,6 +1062,8 @@ export function Broadcast() {
   const [senders, setSenders] = useState<InfobipApi[]>([]);
   const [templates, setTemplates] = useState<SavedTemplate[]>([]);
   const [tags, setTags] = useState<ContactTag[]>([]);
+  const [senderQuery, setSenderQuery] = useState("");
+  const [templateQuery, setTemplateQuery] = useState("");
   const [tagQuery, setTagQuery] = useState("");
   const [activeCustomizeTemplateId, setActiveCustomizeTemplateId] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1082,6 +1084,38 @@ export function Broadcast() {
     () => availableTemplates.filter((template) => plan.templateIds.includes(template.id)),
     [availableTemplates, plan.templateIds],
   );
+  const filteredSenders = useMemo(() => {
+    const query = senderQuery.trim().toLowerCase();
+    return [...senders]
+      .sort((a, b) => senderLabel(a).localeCompare(senderLabel(b), "pt-BR"))
+      .filter((sender) => {
+        if (!query) return true;
+        return [
+          senderLabel(sender),
+          senderNumber(sender),
+          senderBusinessLabel(sender),
+          String(sender.id || ""),
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+      });
+  }, [senderQuery, senders]);
+  const filteredTemplates = useMemo(() => {
+    const query = templateQuery.trim().toLowerCase();
+    return availableTemplates.filter((template) => {
+      if (!query) return true;
+      return [
+        template.name,
+        templateText(template),
+        templateStatusLabel(template),
+        String(template.id || ""),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    });
+  }, [availableTemplates, templateQuery]);
   const selectedTags = useMemo(() => tags.filter((tag) => plan.tagIds.includes(tag.id)), [plan.tagIds, tags]);
   const filteredTags = useMemo(() => {
     const query = tagQuery.trim().toLowerCase();
@@ -1948,8 +1982,20 @@ export function Broadcast() {
                 </div>
               </div>
 
-              <div className="sender-grid">
-                {senders.map((sender) => {
+              <div className="broadcast-list-toolbar">
+                <label className="search-field">
+                  <Search size={16} />
+                  <input
+                    placeholder="Buscar remetente por nome, telefone ou BM..."
+                    value={senderQuery}
+                    onChange={(event) => setSenderQuery(event.target.value)}
+                  />
+                </label>
+                <span>{filteredSenders.length} de {senders.length} remetente(s)</span>
+              </div>
+
+              <div className="sender-grid broadcast-picker-scroll">
+                {filteredSenders.map((sender) => {
                   const selected = plan.senderId === sender.id;
                   return (
                     <button
@@ -1973,6 +2019,12 @@ export function Broadcast() {
                     <p>Nenhuma BM conectada retornou um remetente. Dá para testar digitando um remetente manual abaixo.</p>
                   </div>
                 ) : null}
+                {senders.length && !filteredSenders.length ? (
+                  <div className="empty-helper">
+                    <Search size={18} />
+                    <p>Nenhum remetente encontrado para essa busca.</p>
+                  </div>
+                ) : null}
               </div>
             </>
           ) : null}
@@ -1987,8 +2039,20 @@ export function Broadcast() {
                 </div>
               </div>
 
-              <div className="template-select-list">
-                {availableTemplates.map((template) => {
+              <div className="broadcast-list-toolbar">
+                <label className="search-field">
+                  <Search size={16} />
+                  <input
+                    placeholder="Buscar template por nome, conteúdo ou status..."
+                    value={templateQuery}
+                    onChange={(event) => setTemplateQuery(event.target.value)}
+                  />
+                </label>
+                <span>{selectedTemplates.length} selecionado(s) de {filteredTemplates.length}</span>
+              </div>
+
+              <div className="template-select-list broadcast-picker-scroll">
+                {filteredTemplates.map((template) => {
                   const selected = plan.templateIds.includes(template.id);
                   return (
                     <button
@@ -2017,6 +2081,12 @@ export function Broadcast() {
                       </p>
                       {status ? <small>{status}</small> : null}
                     </div>
+                  </div>
+                ) : null}
+                {availableTemplates.length && !filteredTemplates.length ? (
+                  <div className="empty-helper">
+                    <Search size={18} />
+                    <p>Nenhum template encontrado para essa busca.</p>
                   </div>
                 ) : null}
               </div>

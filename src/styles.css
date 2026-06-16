@@ -4509,6 +4509,43 @@ a {
   padding: 15px;
 }
 
+.broadcast-list-toolbar {
+  align-items: center;
+  background: hsl(260 25% 8% / .74);
+  border: 1px solid hsl(270 22% 18%);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  padding: 12px;
+}
+
+.broadcast-list-toolbar > span {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.broadcast-picker-scroll {
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+  scrollbar-color: hsl(var(--primary) / .42) transparent;
+}
+
+.sender-grid.broadcast-picker-scroll {
+  gap: 8px;
+}
+
+.sender-grid.broadcast-picker-scroll .select-card {
+  min-height: 74px;
+}
+
+.template-select-list.broadcast-picker-scroll {
+  max-height: 560px;
+}
+
 .template-select-row p {
   line-height: 1.45;
 }
@@ -4522,6 +4559,10 @@ a {
 
 .tag-card {
   min-height: 74px;
+}
+
+.tag-select-grid {
+  gap: 8px;
 }
 
 .tag-binding-list span,
