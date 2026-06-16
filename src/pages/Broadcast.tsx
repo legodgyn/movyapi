@@ -36,6 +36,7 @@ const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
 const LOCAL_CONNECTED_SENDERS_KEY = "movy.connectedSenders";
 const LOCAL_META_SENT_TEMPLATES_KEY = "scaleapi.metaSentTemplatesCache";
 const GRAPH_API_BASE = "https://graph.facebook.com/v24.0";
+const TEMPLATE_LINE_BREAK_TOKEN = "\v";
 
 type WizardStep = "sender" | "templates" | "audience" | "customize" | "monitor";
 type RunStatus = "idle" | "sending" | "paused" | "done";
@@ -713,6 +714,10 @@ function applyVariables(text: string, values: Record<string, string>) {
   return text.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, variable: string) => values[variable] || `{{${variable}}}`);
 }
 
+function renderTemplateLineBreaks(text: string) {
+  return String(text || "").replace(/\v/g, "\n");
+}
+
 function insertTextAtSelection(value: string, insert: string, start?: number | null, end?: number | null) {
   const safeStart = typeof start === "number" ? start : value.length;
   const safeEnd = typeof end === "number" ? end : safeStart;
@@ -1279,7 +1284,7 @@ export function Broadcast() {
 
   function insertVariableBreak(templateId: string, variable: string, lines: number, textarea?: HTMLTextAreaElement | null) {
     const currentValue = (plan.customizations[templateId] || emptyCustomization()).variables[variable] || "";
-    const insert = "\n".repeat(lines);
+    const insert = TEMPLATE_LINE_BREAK_TOKEN.repeat(lines);
     const start = textarea?.selectionStart ?? currentValue.length;
     const nextValue = insertTextAtSelection(currentValue, insert, start, textarea?.selectionEnd);
     updateVariable(templateId, variable, nextValue);
@@ -2318,9 +2323,11 @@ export function Broadcast() {
                           ) : null}
                           <div className="broadcast-whatsapp-bubble">
                             <p>
-                              {applyVariables(
-                                templateText(activeCustomizeTemplate) || "Template sem texto de previa.",
-                                (plan.customizations[activeCustomizeTemplate.id] || emptyCustomization()).variables,
+                              {renderTemplateLineBreaks(
+                                applyVariables(
+                                  templateText(activeCustomizeTemplate) || "Template sem texto de previa.",
+                                  (plan.customizations[activeCustomizeTemplate.id] || emptyCustomization()).variables,
+                                )
                               )}
                             </p>
                             <small>{activeCustomizeTemplate.footer_text || 'Digite "sair" para nao receber mais.'}</small>
