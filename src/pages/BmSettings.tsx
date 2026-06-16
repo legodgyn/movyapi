@@ -1,5 +1,6 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { BadgeCheck, Building2, Link2, Plus, RefreshCcw, Save, ShieldCheck, Smartphone, X } from "lucide-react";
+import { readPersistentValue, writePersistentValue } from "../lib/persistentStorage";
 
 const LOCAL_BM_SETTINGS_KEY = "scaleapi.bmSettings";
 const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
@@ -98,6 +99,23 @@ function writeAccounts(accounts: BmAccount[], activeId?: string) {
   }
 }
 
+function persistAccountsRemote(accounts: BmAccount[], activeId?: string) {
+  const active = accounts.find((account) => account.id === activeId) || accounts.find((account) => account.status === "connected") || accounts[0];
+  void writePersistentValue(LOCAL_BM_ACCOUNTS_KEY, accounts);
+  if (active) {
+    void writePersistentValue(LOCAL_BM_SETTINGS_KEY, {
+      businessName: active.name,
+      appId: active.appId,
+      accessToken: active.accessToken,
+      defaultWabaId: active.defaultWabaId,
+      defaultPhoneNumberId: active.defaultPhoneNumberId,
+      status: active.status,
+      lastCheckedAt: active.lastCheckedAt,
+    });
+    void writePersistentValue("scaleapi.bmPhoneNumbers", active.phones || []);
+  }
+}
+
 function maskSecret(value: string) {
   if (!value.trim()) return "Nao informado";
   if (value.length <= 10) return "••••••";
@@ -131,6 +149,20 @@ export function BmSettings() {
   const [isSyncing, setIsSyncing] = useState("");
   const [validationDetails, setValidationDetails] = useState<BmValidationDetail[]>([]);
 
+  useEffect(() => {
+    let mounted = true;
+    readPersistentValue<BmAccount[]>(LOCAL_BM_ACCOUNTS_KEY, readAccounts()).then((remoteAccounts) => {
+      if (!mounted || !Array.isArray(remoteAccounts) || !remoteAccounts.length) return;
+      const nextActiveId = remoteAccounts.find((account) => account.status === "connected")?.id || remoteAccounts[0]?.id || "";
+      setAccounts(remoteAccounts);
+      setActiveId(nextActiveId);
+      writeAccounts(remoteAccounts, nextActiveId);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const activeAccount = useMemo(
     () => accounts.find((account) => account.id === activeId) || accounts.find((account) => account.status === "connected") || accounts[0],
     [accounts, activeId],
@@ -142,6 +174,7 @@ export function BmSettings() {
     setAccounts(next);
     setActiveId(nextActiveId);
     writeAccounts(next, nextActiveId);
+    persistAccountsRemote(next, nextActiveId);
   }
 
   function openNewModal() {

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { BadgeCheck, CheckCircle2, Loader2, PlugZap, RefreshCcw, ShieldCheck, Smartphone } from "lucide-react";
+import { writePersistentValue } from "../lib/persistentStorage";
 
 const LOCAL_BM_SETTINGS_KEY = "scaleapi.bmSettings";
 const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
@@ -104,10 +105,13 @@ function readAccounts(): BmAccount[] {
 function persistAccounts(accounts: BmAccount[]) {
   const uniqueAccounts = dedupeAccounts(accounts);
   localStorage.setItem(LOCAL_BM_ACCOUNTS_KEY, JSON.stringify(uniqueAccounts));
+  void writePersistentValue(LOCAL_BM_ACCOUNTS_KEY, uniqueAccounts);
   const active = uniqueAccounts[0];
   if (active) {
     localStorage.setItem(LOCAL_BM_SETTINGS_KEY, JSON.stringify(active));
     localStorage.setItem("scaleapi.bmPhoneNumbers", JSON.stringify(active.phones || []));
+    void writePersistentValue(LOCAL_BM_SETTINGS_KEY, active);
+    void writePersistentValue("scaleapi.bmPhoneNumbers", active.phones || []);
   }
 }
 
@@ -122,6 +126,7 @@ function readConnectedSenders() {
 
 function writeConnectedSenders(senders: ConnectedSender[]) {
   localStorage.setItem(LOCAL_CONNECTED_SENDERS_KEY, JSON.stringify(senders));
+  void writePersistentValue(LOCAL_CONNECTED_SENDERS_KEY, senders);
 }
 
 async function graphGet<T = Record<string, unknown>>(path: string, token: string, params: Record<string, string> = {}) {

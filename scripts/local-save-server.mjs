@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 function loadDotEnv() {
   const envPath = join(process.cwd(), ".env");
@@ -25,6 +25,10 @@ const host = process.env.SCALEAPI_SAVE_HOST || "127.0.0.1";
 const downloadsDir = join(homedir(), "Downloads");
 const checkNumberApiKey = process.env.CHECKNUMBER_API_KEY || "";
 const metaWebhookVerifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN || "";
+const supabaseUrl = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const supabaseStorageTable = process.env.SUPABASE_KV_TABLE || "movy_app_storage";
+const storageFilePath = process.env.MOVY_STORAGE_FILE || join(process.cwd(), "data", "storage.json");
 const checkNumberBaseUrl = "https://api.checknumber.ai/v1";
 const whatsappStatuses = new Map();
 const graphApiBase = "https://graph.facebook.com/v24.0";
@@ -34,7 +38,7 @@ function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
     "Content-Type": "application/json; charset=utf-8",
   });
   response.end(JSON.stringify(payload));
@@ -43,7 +47,7 @@ function sendJson(response, statusCode, payload) {
 function setCors(response, contentType = "application/json; charset=utf-8") {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Headers", "content-type,x-api-key");
-  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
   response.setHeader("Content-Type", contentType);
 }
 
@@ -82,6 +86,63 @@ function collectWhatsAppStatuses(payload) {
     }
   }
   return collected;
+}
+
+function safeStorageKey(value) {
+  const key = String(value || "").trim();
+  return /^[a-zA-Z0-9._:-]{1,120}$/.test(key) ? key : "";
+}
+
+async function readFileStorage() {
+  try {
+    return JSON.parse(await readFile(storageFilePath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+async function writeFileStorage(store) {
+  await mkdir(dirname(storageFilePath), { recursive: true });
+  await writeFile(storageFilePath, JSON.stringify(store, null, 2), "utf8");
+}
+
+async function getStoredValue(key) {
+  if (supabaseUrl && supabaseServiceRoleKey) {
+    const response = await fetch(`${supabaseUrl}/rest/v1/${supabaseStorageTable}?key=eq.${encodeURIComponent(key)}&select=value`, {
+      headers: {
+        apikey: supabaseServiceRoleKey,
+        Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      },
+    });
+    const data = await response.json().catch(() => []);
+    if (!response.ok) throw new Error(data?.message || `Supabase retornou HTTP ${response.status}`);
+    return Array.isArray(data) && data[0] ? data[0].value : null;
+  }
+
+  const store = await readFileStorage();
+  return store[key] ?? null;
+}
+
+async function setStoredValue(key, value) {
+  if (supabaseUrl && supabaseServiceRoleKey) {
+    const response = await fetch(`${supabaseUrl}/rest/v1/${supabaseStorageTable}`, {
+      body: JSON.stringify({ key, value, updated_at: new Date().toISOString() }),
+      headers: {
+        apikey: supabaseServiceRoleKey,
+        Authorization: `Bearer ${supabaseServiceRoleKey}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      method: "POST",
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data?.message || `Supabase retornou HTTP ${response.status}`);
+    return;
+  }
+
+  const store = await readFileStorage();
+  store[key] = value;
+  await writeFileStorage(store);
 }
 
 function asRecord(value) {
@@ -481,6 +542,40 @@ createServer(async (request, response) => {
 
   if (request.method === "GET" && request.url?.startsWith("/broadcast/debug-last")) {
     sendJson(response, 200, { ok: true, debug: lastBroadcastDebug });
+    return;
+  }
+
+  if (request.method === "GET" && request.url?.startsWith("/storage/")) {
+    try {
+      const url = new URL(request.url || "", `http://${request.headers.host}`);
+      const key = safeStorageKey(decodeURIComponent(url.pathname.replace(/^\/storage\//, "")));
+      if (!key) {
+        sendJson(response, 400, { ok: false, error: "invalid-storage-key" });
+        return;
+      }
+      const value = await getStoredValue(key);
+      sendJson(response, 200, { ok: true, key, value });
+    } catch (error) {
+      sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : "storage-read-failed" });
+    }
+    return;
+  }
+
+  if (request.method === "PUT" && request.url?.startsWith("/storage/")) {
+    try {
+      const url = new URL(request.url || "", `http://${request.headers.host}`);
+      const key = safeStorageKey(decodeURIComponent(url.pathname.replace(/^\/storage\//, "")));
+      if (!key) {
+        sendJson(response, 400, { ok: false, error: "invalid-storage-key" });
+        return;
+      }
+      const body = await readRequestBody(request);
+      const payload = JSON.parse(body.toString("utf8") || "{}");
+      await setStoredValue(key, payload.value ?? null);
+      sendJson(response, 200, { ok: true, key });
+    } catch (error) {
+      sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : "storage-write-failed" });
+    }
     return;
   }
 

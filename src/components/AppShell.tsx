@@ -1,8 +1,25 @@
+import { useEffect } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { LogOut, PanelLeft, Sun, Zap } from "lucide-react";
 import { clearToken, getCurrentUser } from "../lib/auth";
 import { hasPermission } from "../lib/localUsers";
 import { menuSections } from "../lib/menu";
+import { readPersistentValue } from "../lib/persistentStorage";
+
+const PERSISTENT_KEYS = [
+  "scaleapi.bmAccounts",
+  "scaleapi.bmSettings",
+  "scaleapi.bmPhoneNumbers",
+  "movy.connectedSenders",
+];
+
+function readLocalJson(key: string) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "null");
+  } catch {
+    return null;
+  }
+}
 
 const titles: Record<string, { title: string; description: string }> = {
   "/": {
@@ -76,6 +93,17 @@ export function AppShell() {
     .join("")
     .slice(0, 2)
     .toUpperCase() || "MV";
+
+  useEffect(() => {
+    PERSISTENT_KEYS.forEach((key) => {
+      const fallback = readLocalJson(key);
+      void readPersistentValue(key, fallback).then((value) => {
+        if (value !== null && value !== undefined) {
+          localStorage.setItem(key, JSON.stringify(value));
+        }
+      });
+    });
+  }, []);
 
   function handleLogout() {
     clearToken();
