@@ -22,11 +22,11 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { broadcasts, contacts, infobipApis, savedTemplates } from "../lib/services";
+import { broadcasts, contacts, infobipApis, media as mediaService, savedTemplates } from "../lib/services";
 import { config } from "../lib/config";
 import { apiGet, unwrapList } from "../lib/api";
 import { labelOf } from "../lib/format";
-import type { ContactItem, ContactTag, InfobipApi, SavedTemplate } from "../lib/types";
+import type { ContactItem, ContactTag, InfobipApi, MediaItem, SavedTemplate } from "../lib/types";
 
 const LOCAL_BROADCAST_PLAN_KEY = "scaleapi.broadcastPlan";
 const LOCAL_BROADCAST_RUN_KEY = "scaleapi.broadcastRun";
@@ -35,6 +35,7 @@ const LOCAL_BM_SETTINGS_KEY = "scaleapi.bmSettings";
 const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
 const LOCAL_CONNECTED_SENDERS_KEY = "movy.connectedSenders";
 const LOCAL_META_SENT_TEMPLATES_KEY = "scaleapi.metaSentTemplatesCache";
+const MEDIA_LIBRARY_KEY = "movy.mediaLibrary";
 const GRAPH_API_BASE = "https://graph.facebook.com/v24.0";
 
 type WizardStep = "sender" | "templates" | "audience" | "customize" | "monitor";
@@ -59,6 +60,10 @@ type TemplateCustomization = {
   mediaUrl: string;
   mediaName: string;
   mediaType: string;
+};
+
+type LocalMediaItem = MediaItem & {
+  storagePath?: string;
 };
 
 type BroadcastPlan = {
@@ -858,6 +863,74 @@ function movyBackendUrl() {
   return `${origin.replace(/\/$/, "")}/${configured.replace(/^\/+|\/+$/g, "")}`;
 }
 
+function absoluteMediaUrl(value?: string) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith("/local-api/")) return `${config.publicAppUrl.replace(/\/$/, "")}${url}`;
+  if (url.startsWith("/media/files/")) return `${movyBackendUrl()}${url}`;
+  if (url.startsWith("/")) return `${movyBackendUrl()}${url}`;
+  return url;
+}
+
+function normalizeMediaLibraryItem(item: LocalMediaItem): LocalMediaItem {
+  const storagePath =
+    item.storagePath ||
+    String(item.url || item.public_url || "").match(/\/media\/files\/[^?#]+/)?.[0] ||
+    "";
+  const url = absoluteMediaUrl(item.public_url || item.url || storagePath);
+  return {
+    ...item,
+    storagePath,
+    url,
+    public_url: url,
+  };
+}
+
+function mediaItemUrl(item: LocalMediaItem) {
+  return absoluteMediaUrl(item.public_url || item.url || item.storagePath);
+}
+
+function mediaItemName(item: LocalMediaItem) {
+  return String(item.name || item.file_name || mediaItemUrl(item).split("/").pop() || "Midia salva");
+}
+
+function mediaItemKind(item: LocalMediaItem) {
+  const type = String(item.type || "").toLowerCase();
+  const url = mediaItemUrl(item).toLowerCase();
+  if (type.startsWith("image/") || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url)) return "image";
+  if (type.startsWith("video/") || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url)) return "video";
+  if (type.includes("pdf") || /\.(pdf|docx?|xlsx?|csv)(\?|$)/i.test(url)) return "document";
+  return "document";
+}
+
+async function readBroadcastMediaLibrary() {
+  const byId = new Map<string, LocalMediaItem>();
+  const addItems = (items: LocalMediaItem[]) => {
+    items.map(normalizeMediaLibraryItem).forEach((item, index) => {
+      const url = mediaItemUrl(item);
+      if (!url) return;
+      byId.set(String(item.id || url || index), item);
+    });
+  };
+
+  await mediaService.normalizedList().then((items) => addItems(items as LocalMediaItem[])).catch(() => null);
+
+  try {
+    const response = await fetch(`${movyBackendUrl()}/storage/${encodeURIComponent(MEDIA_LIBRARY_KEY)}`);
+    const payload = await response.json().catch(() => ({}));
+    if (Array.isArray(payload.value)) addItems(payload.value as LocalMediaItem[]);
+  } catch {
+    try {
+      addItems(JSON.parse(localStorage.getItem(MEDIA_LIBRARY_KEY) || "[]") as LocalMediaItem[]);
+    } catch {
+      // local library unavailable
+    }
+  }
+
+  return Array.from(byId.values());
+}
+
 async function fetchLocalMessageStatuses(messageIds: string[]) {
   if (!messageIds.length) return [];
   const response = await fetch(`${movyBackendUrl()}/broadcast/statuses?ids=${encodeURIComponent(messageIds.join(","))}`);
@@ -1083,6 +1156,7 @@ export function Broadcast() {
   const [senders, setSenders] = useState<InfobipApi[]>([]);
   const [templates, setTemplates] = useState<SavedTemplate[]>([]);
   const [tags, setTags] = useState<ContactTag[]>([]);
+  const [mediaLibrary, setMediaLibrary] = useState<LocalMediaItem[]>([]);
   const [senderQuery, setSenderQuery] = useState("");
   const [templateQuery, setTemplateQuery] = useState("");
   const [tagQuery, setTagQuery] = useState("");
@@ -1197,12 +1271,13 @@ export function Broadcast() {
     setLoading(true);
     try {
       const bmSenders = readBmSenders();
-      const [remoteSenders, remoteMetaTemplates, remoteAllTemplates, backendMessageTemplates, remoteTags] = await Promise.all([
+      const [remoteSenders, remoteMetaTemplates, remoteAllTemplates, backendMessageTemplates, remoteTags, savedMedia] = await Promise.all([
         withTimeout(infobipApis.normalizedList("whatsapp")).catch(() => infobipApis.normalizedList().catch(() => [])),
         withTimeout(savedTemplates.normalizedList("Meta")).catch(() => savedTemplates.normalizedList().catch(() => [])),
         withTimeout(savedTemplates.normalizedList()).catch(() => []),
         withTimeout(fetchBackendMessageTemplates()).catch(() => []),
         withTimeout(contacts.normalizedTags()).catch(() => []),
+        withTimeout(readBroadcastMediaLibrary()).catch(() => []),
       ]);
       const senderAccounts = remoteSenders.map(senderToBmAccount).filter(Boolean) as BmSettingsData[];
       const directMetaResult = await withTimeout(fetchApprovedMetaTemplatesFromBmAccounts(senderAccounts), 5000).catch((error) => ({
@@ -1226,6 +1301,7 @@ export function Broadcast() {
       setSenders(nextSenders);
       setTemplates(fallbackTemplates);
       setTags([...localTags, ...remoteTags.filter((tag) => !localTags.some((localTag) => localTag.id === tag.id))]);
+      setMediaLibrary(savedMedia);
       setStatus(
         `${nextSenders.length} remetente(s), ${fallbackTemplates.length} template(s) e ${localTags.length + remoteTags.length} etiqueta(s) carregados.` +
           (directMetaResult.errors.length ? ` Algumas BMs falharam: ${directMetaResult.errors.slice(0, 2).join(" | ")}` : "")
@@ -1321,6 +1397,26 @@ export function Broadcast() {
       mediaName: file.name,
       mediaType: file.type || "arquivo",
       mediaUrl: URL.createObjectURL(file),
+    });
+  }
+
+  function mediaChoicesForTemplate(template: SavedTemplate) {
+    const expected = resolveHeaderMediaType(template, plan.customizations[template.id] || emptyCustomization());
+    return [...mediaLibrary]
+      .filter((item) => mediaItemUrl(item))
+      .sort((left, right) => {
+        const leftMatch = mediaItemKind(left) === expected ? 0 : 1;
+        const rightMatch = mediaItemKind(right) === expected ? 0 : 1;
+        return leftMatch - rightMatch || mediaItemName(left).localeCompare(mediaItemName(right), "pt-BR");
+      })
+      .slice(0, 8);
+  }
+
+  function selectSavedMedia(templateId: string, item: LocalMediaItem) {
+    updateCustomization(templateId, {
+      mediaName: mediaItemName(item),
+      mediaType: item.type || mediaItemKind(item),
+      mediaUrl: mediaItemUrl(item),
     });
   }
 
@@ -2420,6 +2516,37 @@ export function Broadcast() {
                           onChange={(event) => updateCustomization(activeCustomizeTemplate.id, { mediaUrl: event.target.value })}
                         />
                       </label>
+                      {mediaChoicesForTemplate(activeCustomizeTemplate).length ? (
+                        <div className="saved-media-picker">
+                          <div className="saved-media-picker-head">
+                            <strong>Midias salvas</strong>
+                            <span>{mediaChoicesForTemplate(activeCustomizeTemplate).length} opcoes</span>
+                          </div>
+                          <div className="saved-media-list">
+                            {mediaChoicesForTemplate(activeCustomizeTemplate).map((item) => {
+                              const kind = mediaItemKind(item);
+                              const url = mediaItemUrl(item);
+                              return (
+                                <button
+                                  className="saved-media-option"
+                                  key={String(item.id || url)}
+                                  type="button"
+                                  onClick={() => selectSavedMedia(activeCustomizeTemplate.id, item)}
+                                >
+                                  <span className="saved-media-thumb">
+                                    {kind === "image" ? <img alt="" src={url} /> : <Image size={16} />}
+                                  </span>
+                                  <span>
+                                    <strong>{mediaItemName(item)}</strong>
+                                    <small>{kind}</small>
+                                  </span>
+                                  <b>Usar</b>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
                       <label className="button secondary file-button">
                         <Image size={17} />
                         Selecionar arquivo
