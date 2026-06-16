@@ -130,7 +130,7 @@ const steps: Array<{ key: WizardStep; title: string; subtitle: string }> = [
   { key: "templates", title: "Template", subtitle: "Mensagens aprovadas" },
   { key: "audience", title: "Tag", subtitle: "Uma por template" },
   { key: "customize", title: "Variáveis & Mídia", subtitle: "Conteúdo do envio" },
-  { key: "monitor", title: "Revisão", subtitle: "Criar lote" },
+  { key: "monitor", title: "Disparo", subtitle: "Criar lote" },
 ];
 
 const defaultPlan: BroadcastPlan = {
@@ -2394,20 +2394,12 @@ export function Broadcast() {
               <div className="wizard-section-heading">
                 <Send size={20} />
                 <div>
-                  <h2>Revisão do lote</h2>
+                  <h2>Disparo do lote</h2>
                   <p>Aqui você acompanha entregues, pendentes e falhas enquanto a campanha roda.</p>
                 </div>
               </div>
 
-              <div className="review-layout">
-                <div className="custom-preview-card">
-                  <span>Pré-visualização</span>
-                  <p>
-                    {activeCustomizeTemplate
-                      ? applyVariables(templateText(activeCustomizeTemplate) || "Template sem texto de prévia.", (plan.customizations[activeCustomizeTemplate.id] || emptyCustomization()).variables)
-                      : "Selecione um template para ver a prévia."}
-                  </p>
-                </div>
+              <div className="review-layout review-layout-summary-only">
                 <div className="review-summary-card">
                   <h3>Resumo do lote</h3>
                   <div className="review-line">
@@ -2610,7 +2602,7 @@ export function Broadcast() {
           </div>
 
           <button className="button full" disabled={!planReady} onClick={() => setActiveStep("monitor")}>
-            Ir para revisão
+            Ir para disparo
             <ArrowRight size={17} />
           </button>
           {status ? <p className="hint">{status}</p> : null}

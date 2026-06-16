@@ -4703,6 +4703,10 @@ a {
   grid-template-columns: minmax(320px, .8fr) minmax(520px, 1.8fr);
 }
 
+.review-layout-summary-only {
+  grid-template-columns: 1fr;
+}
+
 .review-layout .custom-preview-card {
   background:
     linear-gradient(180deg, hsl(260 25% 10% / .94), hsl(260 30% 6% / .98)),
