@@ -36,7 +36,6 @@ const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
 const LOCAL_CONNECTED_SENDERS_KEY = "movy.connectedSenders";
 const LOCAL_META_SENT_TEMPLATES_KEY = "scaleapi.metaSentTemplatesCache";
 const GRAPH_API_BASE = "https://graph.facebook.com/v24.0";
-const TEMPLATE_LINE_BREAK_TOKEN = "\v";
 
 type WizardStep = "sender" | "templates" | "audience" | "customize" | "monitor";
 type RunStatus = "idle" | "sending" | "paused" | "done";
@@ -726,7 +725,9 @@ function insertTextAtSelection(value: string, insert: string, start?: number | n
 
 function normalizeTemplateParameterText(value: string) {
   return String(value || "")
-    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\v/g, "\n")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\t+/g, " ")
     .replace(/ {5,}/g, "    ")
     .trim();
 }
@@ -1284,7 +1285,7 @@ export function Broadcast() {
 
   function insertVariableBreak(templateId: string, variable: string, lines: number, textarea?: HTMLTextAreaElement | null) {
     const currentValue = (plan.customizations[templateId] || emptyCustomization()).variables[variable] || "";
-    const insert = TEMPLATE_LINE_BREAK_TOKEN.repeat(lines);
+    const insert = "\n".repeat(lines);
     const start = textarea?.selectionStart ?? currentValue.length;
     const nextValue = insertTextAtSelection(currentValue, insert, start, textarea?.selectionEnd);
     updateVariable(templateId, variable, nextValue);
