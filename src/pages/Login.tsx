@@ -45,9 +45,6 @@ export function Login() {
       <form className="card login-card" onSubmit={handleSubmit}>
         <h1 style={{ margin: 0, fontSize: 28 }}>Movy Api</h1>
         <p className="muted">Entre no seu workspace de automacao para WhatsApp</p>
-        <p className="muted" style={{ fontSize: 13 }}>
-          Teste local: admin@admin.com / admin
-        </p>
 
         <div className="grid" style={{ marginTop: 22 }}>
           <div className="field">

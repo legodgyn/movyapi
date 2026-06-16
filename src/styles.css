@@ -77,6 +77,8 @@ a {
   background:
     linear-gradient(180deg, hsl(260 28% 5% / .98), hsl(260 30% 4% / .99));
   border-right: 1px solid hsl(var(--border));
+  display: flex;
+  flex-direction: column;
   padding: 14px 10px 10px;
   position: sticky;
   top: 0;
@@ -182,21 +184,53 @@ a {
   transform: translateX(1px);
 }
 
+.sidebar-footer {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 18px;
+  position: sticky;
+  bottom: 10px;
+}
+
+.sidebar-logout {
+  align-items: center;
+  background: hsl(var(--md-surface-container-high) / .36);
+  border: 1px solid hsl(var(--md-outline-variant));
+  border-radius: 9px;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 9px;
+  min-height: 36px;
+  padding: 0 10px;
+  transition: background .18s ease, border-color .18s ease, color .18s ease;
+  width: 100%;
+}
+
+.sidebar-logout:hover {
+  background: hsl(var(--danger) / .12);
+  border-color: hsl(var(--danger) / .28);
+  color: hsl(var(--foreground));
+}
+
+.sidebar-logout svg {
+  color: hsl(var(--danger));
+}
+
 .sidebar-status {
   align-items: center;
   background: hsl(var(--md-surface-container-high) / .44);
   border: 1px solid hsl(var(--md-outline-variant));
   border-radius: 9px;
-  bottom: 12px;
   color: hsl(var(--muted-foreground));
   display: flex;
   font-size: 11px;
   gap: 8px;
-  left: 10px;
   padding: 9px 10px;
-  position: sticky;
-  right: 10px;
-  top: calc(100vh - 54px);
 }
 
 .sidebar-status span {

@@ -31,10 +31,16 @@ function Protected() {
   return <AppShell />;
 }
 
+function AuthGate() {
+  const user = getCurrentUser();
+  if (hasToken()) return <Navigate to={firstAllowedPath(user)} replace />;
+  return <Login />;
+}
+
 export function App() {
   return (
     <Routes>
-      <Route path="/auth" element={<Login />} />
+      <Route path="/auth" element={<AuthGate />} />
       <Route element={<Protected />}>
         <Route path="/" element={<TemplateCreator />} />
         <Route path="/broadcast" element={<Broadcast />} />
@@ -59,6 +65,7 @@ export function App() {
         <Route path="/admin/v1/users" element={<AdminUsersV1 />} />
         <Route path="/admin/v1/security" element={<Security />} />
       </Route>
+      <Route path="*" element={<Navigate to={hasToken() ? "/" : "/auth"} replace />} />
     </Routes>
   );
 }

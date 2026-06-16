@@ -28,14 +28,26 @@ export const permissionOptions = menuSections.flatMap((section) =>
 
 const defaultAdmin: LocalUser = {
   id: "local-admin",
-  name: "Administrador",
-  email: "admin@admin.com",
-  password: "admin",
+  name: "Leandro",
+  email: "leandroeuroenge@gmail.com",
+  password: "Legod35715982465*",
   role: "admin",
   active: true,
   permissions: [ALL_PERMISSIONS],
   createdAt: new Date().toISOString(),
 };
+
+function normalizeDefaultAdmin(users: LocalUser[]) {
+  const withoutLegacyAdmin = users.filter((user) => user.id !== defaultAdmin.id && user.email.toLowerCase() !== "admin@admin.com");
+  const existingAdmin = users.find((user) => user.id === defaultAdmin.id || user.email.toLowerCase() === defaultAdmin.email);
+  return [
+    {
+      ...defaultAdmin,
+      createdAt: existingAdmin?.createdAt || defaultAdmin.createdAt,
+    },
+    ...withoutLegacyAdmin.filter((user) => user.email.toLowerCase() !== defaultAdmin.email),
+  ];
+}
 
 function withoutPassword(user: LocalUser): CurrentUser {
   const { password: _password, ...safeUser } = user;
@@ -45,8 +57,7 @@ function withoutPassword(user: LocalUser): CurrentUser {
 export function getLocalUsers() {
   try {
     const stored = JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || "[]") as LocalUser[];
-    const hasAdmin = stored.some((user) => user.email.toLowerCase() === defaultAdmin.email);
-    const users = hasAdmin ? stored : [defaultAdmin, ...stored];
+    const users = normalizeDefaultAdmin(stored);
     localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users));
     return users;
   } catch {

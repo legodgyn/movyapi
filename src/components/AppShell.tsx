@@ -1,6 +1,6 @@
-import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { PanelLeft, Sun, Zap } from "lucide-react";
-import { getCurrentUser } from "../lib/auth";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { LogOut, PanelLeft, Sun, Zap } from "lucide-react";
+import { clearToken, getCurrentUser } from "../lib/auth";
 import { hasPermission } from "../lib/localUsers";
 import { menuSections } from "../lib/menu";
 
@@ -56,6 +56,7 @@ const titles: Record<string, { title: string; description: string }> = {
 
 export function AppShell() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const user = getCurrentUser();
   const current = titles[pathname] ?? {
     title: "Movy Api",
@@ -75,6 +76,11 @@ export function AppShell() {
     .join("")
     .slice(0, 2)
     .toUpperCase() || "MV";
+
+  function handleLogout() {
+    clearToken();
+    navigate("/auth", { replace: true });
+  }
 
   return (
     <div className="app">
@@ -106,10 +112,16 @@ export function AppShell() {
           </nav>
         ))}
 
-        <div className="sidebar-status">
-          <span />
-          <strong>Sistema ativo</strong>
-          <a href="/termos">Termos</a>
+        <div className="sidebar-footer">
+          <button className="sidebar-logout" type="button" onClick={handleLogout}>
+            <LogOut size={16} />
+            <span>Sair</span>
+          </button>
+          <div className="sidebar-status">
+            <span />
+            <strong>Sistema ativo</strong>
+            <a href="/termos">Termos</a>
+          </div>
         </div>
       </aside>
 
