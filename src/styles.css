@@ -4587,17 +4587,55 @@ a {
 }
 
 .broadcast-phone-frame {
-  background: hsl(260 22% 5%);
-  border-color: hsl(270 22% 18%);
-  border-radius: 8px;
+  background:
+    linear-gradient(145deg, hsl(260 18% 18%), hsl(260 24% 4%) 42%, hsl(270 28% 11%));
+  border: 1px solid hsl(270 20% 28%);
+  border-radius: 32px;
+  box-shadow:
+    0 24px 60px hsl(260 80% 2% / .5),
+    inset 0 1px 0 hsl(0 0% 100% / .12),
+    inset 0 -1px 0 hsl(0 0% 0% / .55);
   max-height: 610px;
+  overflow: hidden;
+  padding: 22px 12px 14px;
+  position: relative;
+}
+
+.broadcast-phone-frame::before {
+  background: hsl(260 28% 4%);
+  border: 1px solid hsl(0 0% 100% / .06);
+  border-radius: 0 0 14px 14px;
+  content: "";
+  height: 18px;
+  left: 50%;
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  width: 86px;
+  z-index: 2;
+}
+
+.broadcast-phone-frame::after {
+  background: hsl(0 0% 100% / .16);
+  border-radius: 999px;
+  content: "";
+  height: 4px;
+  left: 50%;
+  position: absolute;
+  top: 9px;
+  transform: translateX(-50%);
+  width: 38px;
+  z-index: 3;
 }
 
 .broadcast-phone-scroll {
   background:
     linear-gradient(180deg, hsl(164 82% 20%), hsl(164 90% 16%)),
     radial-gradient(circle at top right, hsl(180 80% 35% / .28), transparent 42%);
-  border-radius: 8px;
+  border: 1px solid hsl(0 0% 100% / .08);
+  border-radius: 22px;
+  min-height: 430px;
+  overflow: hidden;
 }
 
 .broadcast-preview-media {
@@ -4659,6 +4697,73 @@ a {
 
 .review-layout .custom-preview-card p {
   min-height: 120px;
+}
+
+.review-layout .custom-preview-card {
+  background:
+    linear-gradient(145deg, hsl(260 18% 18%), hsl(260 24% 4%) 42%, hsl(270 28% 11%));
+  border: 1px solid hsl(270 20% 28%);
+  border-radius: 32px;
+  box-shadow:
+    0 24px 60px hsl(260 80% 2% / .5),
+    inset 0 1px 0 hsl(0 0% 100% / .12),
+    inset 0 -1px 0 hsl(0 0% 0% / .55);
+  gap: 0;
+  max-width: 360px;
+  min-height: 560px;
+  overflow: hidden;
+  padding: 22px 12px 14px;
+  position: relative;
+}
+
+.review-layout .custom-preview-card::before {
+  background: hsl(260 28% 4%);
+  border: 1px solid hsl(0 0% 100% / .06);
+  border-radius: 0 0 14px 14px;
+  content: "";
+  height: 18px;
+  left: 50%;
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  width: 86px;
+  z-index: 2;
+}
+
+.review-layout .custom-preview-card::after {
+  background: hsl(0 0% 100% / .16);
+  border-radius: 999px;
+  content: "";
+  height: 4px;
+  left: 50%;
+  position: absolute;
+  top: 9px;
+  transform: translateX(-50%);
+  width: 38px;
+  z-index: 3;
+}
+
+.review-layout .custom-preview-card span {
+  background: linear-gradient(180deg, hsl(214 28% 12%), hsl(214 34% 8%));
+  border: 1px solid hsl(0 0% 100% / .08);
+  border-bottom: 0;
+  border-radius: 22px 22px 0 0;
+  color: hsl(0 0% 100% / .84);
+  display: block;
+  padding: 28px 16px 12px;
+}
+
+.review-layout .custom-preview-card p {
+  background:
+    linear-gradient(180deg, hsl(164 82% 20%), hsl(164 90% 16%)),
+    radial-gradient(circle at top right, hsl(180 80% 35% / .28), transparent 42%);
+  border: 1px solid hsl(0 0% 100% / .08);
+  border-radius: 0 0 22px 22px;
+  color: white;
+  font-size: 15px;
+  line-height: 1.5;
+  min-height: 430px;
+  padding: 22px 16px;
 }
 
 .live-kpi-grid {
