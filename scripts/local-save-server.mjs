@@ -30,6 +30,7 @@ const checkNumberApiKey = process.env.CHECKNUMBER_API_KEY || "";
 const metaWebhookVerifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN || "";
 const databasePath = process.env.MOVY_DB_PATH || join(process.cwd(), "data", "movyapi.sqlite");
 const storageFilePath = process.env.MOVY_STORAGE_FILE || join(process.cwd(), "data", "storage.json");
+const uploadsDir = process.env.MOVY_UPLOADS_DIR || join(process.cwd(), "data", "uploads");
 const checkNumberBaseUrl = "https://api.checknumber.ai/v1";
 const whatsappStatuses = new Map();
 const graphApiBase = "https://graph.facebook.com/v24.0";
@@ -39,7 +40,7 @@ function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "content-type",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Content-Type": "application/json; charset=utf-8",
   });
   response.end(JSON.stringify(payload));
@@ -48,7 +49,7 @@ function sendJson(response, statusCode, payload) {
 function setCors(response, contentType = "application/json; charset=utf-8") {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Headers", "content-type,x-api-key");
-  response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   response.setHeader("Content-Type", contentType);
 }
 
@@ -517,6 +518,113 @@ function safeFilename(filename) {
     .slice(0, 120) || "lista-tratada.csv";
 }
 
+function uploadExtension(contentType, fallbackName) {
+  const byType = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
+    "audio/mpeg": ".mp3",
+    "audio/ogg": ".ogg",
+    "audio/wav": ".wav",
+    "application/pdf": ".pdf",
+  };
+  if (byType[contentType]) return byType[contentType];
+  const match = String(fallbackName || "").match(/\.[a-z0-9]{2,8}$/i);
+  return match ? match[0].toLowerCase() : ".bin";
+}
+
+function safeUploadName(name) {
+  return String(name || "midia")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "midia";
+}
+
+async function saveMediaUpload(request, response) {
+  try {
+    const body = await readRequestBody(request);
+    const payload = JSON.parse(body.toString("utf8") || "{}");
+    const filename = safeUploadName(payload.filename);
+    const contentType = String(payload.contentType || "application/octet-stream").trim();
+    const base64 = String(payload.base64 || "").replace(/^data:[^;]+;base64,/, "");
+    if (!base64) {
+      sendJson(response, 400, { ok: false, error: "missing-file-data" });
+      return;
+    }
+
+    const bytes = Buffer.from(base64, "base64");
+    if (!bytes.byteLength) {
+      sendJson(response, 400, { ok: false, error: "empty-file" });
+      return;
+    }
+    if (bytes.byteLength > 32 * 1024 * 1024) {
+      sendJson(response, 413, { ok: false, error: "file-too-large", message: "Arquivo acima do limite de 32MB." });
+      return;
+    }
+
+    await mkdir(uploadsDir, { recursive: true });
+    const extension = uploadExtension(contentType, filename);
+    const storedName = `${Date.now()}-${Math.random().toString(16).slice(2)}-${filename.replace(/\.[a-z0-9]{2,8}$/i, "")}${extension}`;
+    const target = join(uploadsDir, storedName);
+    await writeFile(target, bytes);
+    sendJson(response, 200, {
+      ok: true,
+      filename: storedName,
+      path: `/media/files/${encodeURIComponent(storedName)}`,
+      type: contentType,
+      size: bytes.byteLength,
+    });
+  } catch (error) {
+    sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : "media-upload-failed" });
+  }
+}
+
+async function serveMediaFile(request, response) {
+  try {
+    const url = new URL(request.url || "", `http://${request.headers.host}`);
+    const filename = safeUploadName(decodeURIComponent(url.pathname.replace(/^\/media\/files\//, "")));
+    if (!filename) {
+      sendJson(response, 400, { ok: false, error: "invalid-media-file" });
+      return;
+    }
+    const filePath = join(uploadsDir, filename);
+    const bytes = await readFile(filePath);
+    const extension = filename.split(".").pop()?.toLowerCase();
+    const contentType =
+      extension === "jpg" || extension === "jpeg"
+        ? "image/jpeg"
+        : extension === "png"
+          ? "image/png"
+          : extension === "webp"
+            ? "image/webp"
+            : extension === "gif"
+              ? "image/gif"
+              : extension === "mp4"
+                ? "video/mp4"
+                : extension === "webm"
+                  ? "video/webm"
+                  : extension === "ogg"
+                    ? "audio/ogg"
+                    : extension === "mp3"
+                      ? "audio/mpeg"
+                      : "application/octet-stream";
+    response.writeHead(200, {
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "Content-Length": String(bytes.byteLength),
+      "Content-Type": contentType,
+    });
+    response.end(bytes);
+  } catch {
+    sendJson(response, 404, { ok: false, error: "media-file-not-found" });
+  }
+}
+
 createServer(async (request, response) => {
   if (request.method === "OPTIONS") {
     sendJson(response, 204, {});
@@ -553,6 +661,16 @@ createServer(async (request, response) => {
 
   if (request.method === "GET" && request.url?.startsWith("/broadcast/debug-last")) {
     sendJson(response, 200, { ok: true, debug: lastBroadcastDebug });
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/media/upload") {
+    await saveMediaUpload(request, response);
+    return;
+  }
+
+  if (request.method === "GET" && request.url?.startsWith("/media/files/")) {
+    await serveMediaFile(request, response);
     return;
   }
 

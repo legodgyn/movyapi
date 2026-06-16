@@ -1,27 +1,22 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, FileAudio, FileImage, FileVideo, Image, Trash2, Upload } from "lucide-react";
+import { config } from "../lib/config";
 import { formatBytes, formatDate, labelOf } from "../lib/format";
-import { media } from "../lib/services";
+import { readPersistentValue, writePersistentValue } from "../lib/persistentStorage";
 import type { MediaItem } from "../lib/types";
 
 type LocalMediaItem = MediaItem & {
-  localUrl?: string;
+  storagePath?: string;
 };
 
-function mediaUrl(item: LocalMediaItem) {
-  return item.public_url || item.url || item.localUrl || "";
+const MEDIA_LIBRARY_KEY = "movy.mediaLibrary";
+
+function backendUrl() {
+  return config.localBackendUrl.replace(/\/$/, "");
 }
 
-function uploadUrl(payload: unknown): string {
-  if (!payload || typeof payload !== "object") return "";
-  const record = payload as Record<string, unknown>;
-  for (const key of ["url", "public_url", "publicUrl", "location", "path"]) {
-    const value = record[key];
-    if (typeof value === "string") return value;
-  }
-  const nested = record.data || record.file || record.upload;
-  if (nested && typeof nested === "object") return uploadUrl(nested);
-  return "";
+function mediaUrl(item: LocalMediaItem) {
+  return item.public_url || item.url || "";
 }
 
 function mediaKind(type?: string) {
@@ -38,6 +33,35 @@ function MediaIcon({ type }: { type?: string }) {
   return <FileImage size={22} />;
 }
 
+function fileToBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      resolve(value.includes(",") ? value.split(",").pop() || "" : value);
+    };
+    reader.onerror = () => reject(reader.error || new Error("Falha ao ler arquivo."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadToLocalBackend(file: File) {
+  const response = await fetch(`${backendUrl()}/media/upload`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename: file.name,
+      contentType: file.type || "application/octet-stream",
+      base64: await fileToBase64(file),
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.message || payload.error || "Falha ao enviar midia.");
+  }
+  return payload as { path: string; filename: string; type: string; size: number };
+}
+
 export function Media() {
   const [activeTab, setActiveTab] = useState<"upload" | "library">("upload");
   const [items, setItems] = useState<LocalMediaItem[]>([]);
@@ -46,19 +70,21 @@ export function Media() {
 
   const stats = useMemo(
     () => [
-      { value: "16MB", label: "Limite por arquivo" },
-      { value: "Auto", label: "Compressão inteligente" },
+      { value: "32MB", label: "Limite tecnico" },
+      { value: "DB", label: "Biblioteca persistente" },
       { value: "Link", label: "Download direto" },
     ],
     [],
   );
 
   async function load() {
-    const list = await media.normalizedList().catch(() => []);
-    setItems((current) => {
-      const locals = current.filter((item) => String(item.id).startsWith("local-"));
-      return [...locals, ...list];
-    });
+    const list = await readPersistentValue<LocalMediaItem[]>(MEDIA_LIBRARY_KEY, []);
+    setItems(Array.isArray(list) ? list : []);
+  }
+
+  async function persist(nextItems: LocalMediaItem[]) {
+    setItems(nextItems);
+    await writePersistentValue(MEDIA_LIBRARY_KEY, nextItems);
   }
 
   async function uploadFiles(files: File[]) {
@@ -70,42 +96,28 @@ export function Media() {
 
     for (const file of files) {
       try {
-        const uploaded = await media.upload(file);
-        const remoteUrl = uploadUrl(uploaded);
-        const saved = await media
-          .save({
-            name: file.name,
-            type: file.type,
-            size: file.size,
-            url: remoteUrl,
-            upload: uploaded,
-          })
-          .catch(() => null);
-
+        const uploaded = await uploadToLocalBackend(file);
+        const remoteUrl = `${backendUrl()}${uploaded.path}`;
         created.push({
-          id: saved && typeof saved === "object" && "id" in saved ? String((saved as { id: unknown }).id) : `local-${crypto.randomUUID()}`,
+          id: `media-${crypto.randomUUID()}`,
           name: file.name,
-          type: file.type,
-          size: file.size,
+          type: uploaded.type || file.type,
+          size: uploaded.size || file.size,
           url: remoteUrl,
-          localUrl: remoteUrl || URL.createObjectURL(file),
+          public_url: remoteUrl,
+          storagePath: uploaded.path,
           created_at: new Date().toISOString(),
         });
-      } catch {
-        created.push({
-          id: `local-${crypto.randomUUID()}`,
-          name: file.name,
-          type: file.type,
-          size: file.size,
-          localUrl: URL.createObjectURL(file),
-          created_at: new Date().toISOString(),
-        });
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Falha ao enviar midia.");
       }
     }
 
-    setItems((current) => [...created, ...current]);
-    setActiveTab("library");
-    setStatus(`${created.length} arquivo(s) pronto(s) na biblioteca.`);
+    if (created.length) {
+      await persist([...created, ...items]);
+      setActiveTab("library");
+      setStatus(`${created.length} arquivo(s) pronto(s) na biblioteca.`);
+    }
     setIsUploading(false);
   }
 
@@ -122,7 +134,7 @@ export function Media() {
   async function copyLink(item: LocalMediaItem) {
     const url = mediaUrl(item);
     if (!url) {
-      setStatus("Este arquivo ainda não tem link direto.");
+      setStatus("Este arquivo ainda nao tem link direto.");
       return;
     }
 
@@ -131,16 +143,12 @@ export function Media() {
   }
 
   async function removeItem(item: LocalMediaItem) {
-    if (!String(item.id).startsWith("local-")) {
-      await media.remove(item.id).catch(() => null);
-    }
-    if (item.localUrl?.startsWith("blob:")) URL.revokeObjectURL(item.localUrl);
-    setItems((current) => current.filter((candidate) => candidate.id !== item.id));
-    setStatus("Mídia removida.");
+    await persist(items.filter((candidate) => candidate.id !== item.id));
+    setStatus("Midia removida.");
   }
 
   useEffect(() => {
-    load();
+    void load();
   }, []);
 
   return (
@@ -150,8 +158,8 @@ export function Media() {
           <Image size={24} />
         </div>
         <div>
-          <h1>Gerenciador de Mídias</h1>
-          <p>Upload e compressão inteligente de vídeos, imagens e áudios (convertidos para OGG)</p>
+          <h1>Gerenciador de Midias</h1>
+          <p>Envie imagens, videos e audios para usar em templates, broadcasts e fluxos.</p>
         </div>
       </div>
 
@@ -160,17 +168,16 @@ export function Media() {
           Upload
         </button>
         <button className={activeTab === "library" ? "media-tab active" : "media-tab"} onClick={() => setActiveTab("library")}>
-          Minhas Mídias
+          Minhas Midias
         </button>
       </div>
 
       {activeTab === "upload" ? (
         <>
           <section className="card media-upload-card">
-            <h3>Enviar Mídia</h3>
+            <h3>Enviar Midia</h3>
             <p className="hint">
-              Faça upload de vídeos, imagens ou áudios. Vídeos maiores que 16MB serão automaticamente comprimidos.
-              Áudios são convertidos para formato OGG.
+              Faca upload de videos, imagens ou audios. Os arquivos ficam salvos no banco da VPS e podem ser reutilizados depois.
             </p>
 
             <label
@@ -183,7 +190,7 @@ export function Media() {
                 <Upload size={32} />
               </span>
               <strong>{isUploading ? "Enviando arquivos..." : "Arraste um arquivo ou clique para selecionar"}</strong>
-              <small>Vídeos maiores que 16MB serão comprimidos. Áudios são convertidos para OGG.</small>
+              <small>Formatos aceitos: imagem, video e audio. Limite atual: 32MB por arquivo.</small>
             </label>
           </section>
 
@@ -198,8 +205,8 @@ export function Media() {
         </>
       ) : (
         <section className="card media-library-card">
-          <h3>Minhas Mídias</h3>
-          <p className="hint">Seus arquivos enviados. Clique no ícone de copiar para obter o link direto.</p>
+          <h3>Minhas Midias</h3>
+          <p className="hint">Seus arquivos enviados. Clique no icone de copiar para obter o link direto.</p>
 
           <div className="media-list">
             {items.map((item) => {
@@ -208,14 +215,14 @@ export function Media() {
               return (
                 <article className="media-item" key={item.id}>
                   <div className="media-thumb">
-                    {kind === "image" && url ? <img alt={labelOf(item, "Mídia")} src={url} /> : <MediaIcon type={item.type} />}
+                    {kind === "image" && url ? <img alt={labelOf(item, "Midia")} src={url} /> : <MediaIcon type={item.type} />}
                   </div>
                   <div className="media-info">
-                    <strong>{labelOf(item, "Mídia")}</strong>
+                    <strong>{labelOf(item, "Midia")}</strong>
                     <span>
                       {item.type || "arquivo"} · {formatBytes(item.size)} · {formatDate(item.created_at)}
                     </span>
-                    {url ? <small>{url}</small> : <small>Arquivo local sem link público</small>}
+                    {url ? <small>{url}</small> : <small>Arquivo sem link publico</small>}
                   </div>
                   <div className="media-actions">
                     <button className="icon-button" onClick={() => copyLink(item)} title="Copiar link">
@@ -236,7 +243,7 @@ export function Media() {
             {!items.length ? (
               <div className="media-empty">
                 <Check size={22} />
-                <p>Nenhuma mídia enviada ainda.</p>
+                <p>Nenhuma midia enviada ainda.</p>
               </div>
             ) : null}
           </div>
