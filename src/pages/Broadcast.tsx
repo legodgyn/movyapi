@@ -821,10 +821,19 @@ function normalizeRun(run: BroadcastRun): BroadcastRun {
   };
 }
 
+function movyBackendUrl() {
+  const configured = config.mediaBackendUrl || config.localBackendUrl;
+  if (/^https?:\/\//i.test(configured)) return configured.replace(/\/$/, "");
+  const origin =
+    typeof window !== "undefined" && window.location.origin && !window.location.origin.includes("localhost")
+      ? window.location.origin
+      : config.publicAppUrl;
+  return `${origin.replace(/\/$/, "")}/${configured.replace(/^\/+|\/+$/g, "")}`;
+}
+
 async function fetchLocalMessageStatuses(messageIds: string[]) {
   if (!messageIds.length) return [];
-  const localBackendUrl = config.localBackendUrl.replace(/\/$/, "");
-  const response = await fetch(`${localBackendUrl}/broadcast/statuses?ids=${encodeURIComponent(messageIds.join(","))}`);
+  const response = await fetch(`${movyBackendUrl()}/broadcast/statuses?ids=${encodeURIComponent(messageIds.join(","))}`);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `Status local HTTP ${response.status}`);
   return Array.isArray(data.statuses) ? (data.statuses as MessageStatus[]) : [];
@@ -926,7 +935,7 @@ async function dispatchThroughSystem(payload: Record<string, unknown>, runtimeCr
     runtimeCredentials,
   };
   try {
-    const response = await fetch(`${config.localBackendUrl.replace(/\/$/, "")}/broadcasts/dispatch`, {
+    const response = await fetch(`${movyBackendUrl()}/broadcasts/dispatch`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(localBody),

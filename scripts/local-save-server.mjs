@@ -734,6 +734,15 @@ createServer(async (request, response) => {
       const body = await readRequestBody(request);
       const payload = JSON.parse(body.toString("utf8") || "{}");
       const statuses = collectWhatsAppStatuses(payload);
+      if (statuses.length) {
+        console.log(
+          `Webhook Meta recebeu ${statuses.length} status: ${statuses
+            .map((item) => `${item.id}:${item.status}${item.errorCode ? `:${item.errorCode}` : ""}`)
+            .join(", ")}`,
+        );
+      } else {
+        console.log("Webhook Meta recebeu evento sem status de mensagem.");
+      }
       sendJson(response, 200, { ok: true, received: statuses.length, statuses });
     } catch (error) {
       sendJson(response, 400, { ok: false, error: error instanceof Error ? error.message : "invalid-webhook-payload" });
