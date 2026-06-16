@@ -1,7 +1,24 @@
 import { createServer } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+function loadDotEnv() {
+  const envPath = join(process.cwd(), ".env");
+  if (!existsSync(envPath)) return;
+  const lines = readFileSync(envPath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+    const index = trimmed.indexOf("=");
+    const key = trimmed.slice(0, index).trim();
+    const value = trimmed.slice(index + 1).trim().replace(/^['"]|['"]$/g, "");
+    if (key && process.env[key] === undefined) process.env[key] = value;
+  }
+}
+
+loadDotEnv();
 
 const port = Number(process.env.SCALEAPI_SAVE_PORT ?? 5174);
 const host = process.env.SCALEAPI_SAVE_HOST || "127.0.0.1";
