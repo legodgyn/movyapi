@@ -6,11 +6,13 @@ import {
   Check,
   CheckCircle2,
   Clock3,
+  CornerDownLeft,
   Link2,
   Megaphone,
   MessageCircle,
   Image,
   Paperclip,
+  Pilcrow,
   RefreshCcw,
   RotateCcw,
   Search,
@@ -711,6 +713,12 @@ function applyVariables(text: string, values: Record<string, string>) {
   return text.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, variable: string) => values[variable] || `{{${variable}}}`);
 }
 
+function insertTextAtSelection(value: string, insert: string, start?: number | null, end?: number | null) {
+  const safeStart = typeof start === "number" ? start : value.length;
+  const safeEnd = typeof end === "number" ? end : safeStart;
+  return `${value.slice(0, safeStart)}${insert}${value.slice(safeEnd)}`;
+}
+
 function sameVariableValues(left: Record<string, string>, right: Record<string, unknown>) {
   const leftKeys = Object.keys(left).filter((key) => String(left[key] || "").trim());
   if (!leftKeys.length) return false;
@@ -1260,6 +1268,21 @@ export function Broadcast() {
         },
       };
     });
+  }
+
+  function insertVariableBreak(templateId: string, variable: string, lines: number, textarea?: HTMLTextAreaElement | null) {
+    const currentValue = (plan.customizations[templateId] || emptyCustomization()).variables[variable] || "";
+    const insert = "\n".repeat(lines);
+    const start = textarea?.selectionStart ?? currentValue.length;
+    const nextValue = insertTextAtSelection(currentValue, insert, start, textarea?.selectionEnd);
+    updateVariable(templateId, variable, nextValue);
+
+    window.setTimeout(() => {
+      if (!textarea) return;
+      const nextCursor = start + insert.length;
+      textarea.focus();
+      textarea.setSelectionRange(nextCursor, nextCursor);
+    }, 0);
   }
 
   function toggleTemplate(templateId: string) {
@@ -2323,14 +2346,39 @@ export function Broadcast() {
                       {templateVariables(activeCustomizeTemplate).map((variable) => {
                         const customization = plan.customizations[activeCustomizeTemplate.id] || emptyCustomization();
                         return (
-                          <label className="field" key={variable}>
+                          <label className="field variable-field" key={variable}>
                             <span>{`Variável {{${variable}}}`}</span>
-                            <input
-                              className="input"
+                            <textarea
+                              className="input broadcast-variable-textarea"
                               placeholder={variable === "nome" ? "Ex: nome do contato" : `Valor para {{${variable}}}`}
+                              rows={3}
                               value={customization.variables[variable] || ""}
                               onChange={(event) => updateVariable(activeCustomizeTemplate.id, variable, event.target.value)}
                             />
+                            <div className="variable-format-actions">
+                              <button
+                                type="button"
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={(event) => {
+                                  const textarea = event.currentTarget.closest(".variable-field")?.querySelector("textarea");
+                                  insertVariableBreak(activeCustomizeTemplate.id, variable, 1, textarea);
+                                }}
+                              >
+                                <CornerDownLeft size={14} />
+                                + Linha
+                              </button>
+                              <button
+                                type="button"
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={(event) => {
+                                  const textarea = event.currentTarget.closest(".variable-field")?.querySelector("textarea");
+                                  insertVariableBreak(activeCustomizeTemplate.id, variable, 2, textarea);
+                                }}
+                              >
+                                <Pilcrow size={14} />
+                                + Paragrafo
+                              </button>
+                            </div>
                           </label>
                         );
                       })}
