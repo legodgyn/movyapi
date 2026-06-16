@@ -719,6 +719,13 @@ function insertTextAtSelection(value: string, insert: string, start?: number | n
   return `${value.slice(0, safeStart)}${insert}${value.slice(safeEnd)}`;
 }
 
+function normalizeTemplateParameterText(value: string) {
+  return String(value || "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/ {5,}/g, "    ")
+    .trim();
+}
+
 function sameVariableValues(left: Record<string, string>, right: Record<string, unknown>) {
   const leftKeys = Object.keys(left).filter((key) => String(left[key] || "").trim());
   if (!leftKeys.length) return false;
@@ -762,7 +769,7 @@ function buildMetaMessagePayload(params: {
   }
 
   const bodyParameters = orderedTemplateVariables(template)
-    .map((variable) => String(customization.variables[variable] || "").trim())
+    .map((variable) => normalizeTemplateParameterText(customization.variables[variable] || ""))
     .filter(Boolean)
     .map((text) => ({ type: "text", text }));
 

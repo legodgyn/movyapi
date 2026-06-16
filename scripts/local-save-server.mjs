@@ -234,12 +234,19 @@ function templateButtons(template) {
 
 function variableValue(variables, key) {
   const normalized = normalizeVariableKey(key);
-  return String(
+  return normalizeTemplateParameterText(
     variables[normalized] ??
       variables[normalized.replace(/[{}]/g, "")] ??
       variables[onlyDigits(normalized)] ??
       "",
-  ).trim();
+  );
+}
+
+function normalizeTemplateParameterText(value) {
+  return String(value || "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/ {5,}/g, "    ")
+    .trim();
 }
 
 function buildCloudMessagePayload(recipient, lot) {
