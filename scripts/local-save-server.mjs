@@ -7,6 +7,7 @@ const port = Number(process.env.SCALEAPI_SAVE_PORT ?? 5174);
 const host = process.env.SCALEAPI_SAVE_HOST || "127.0.0.1";
 const downloadsDir = join(homedir(), "Downloads");
 const checkNumberApiKey = process.env.CHECKNUMBER_API_KEY || "";
+const metaWebhookVerifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN || "";
 const checkNumberBaseUrl = "https://api.checknumber.ai/v1";
 const whatsappStatuses = new Map();
 const graphApiBase = "https://graph.facebook.com/v24.0";
@@ -474,6 +475,11 @@ createServer(async (request, response) => {
   if (request.method === "GET" && request.url?.startsWith("/meta/webhook")) {
     const url = new URL(request.url || "", `http://${request.headers.host}`);
     const challenge = url.searchParams.get("hub.challenge") || "";
+    const token = url.searchParams.get("hub.verify_token") || "";
+    if (metaWebhookVerifyToken && token !== metaWebhookVerifyToken) {
+      sendJson(response, 403, { ok: false, error: "invalid-webhook-token" });
+      return;
+    }
     response.writeHead(200, {
       "Access-Control-Allow-Origin": "*",
       "Content-Type": "text/plain; charset=utf-8",
