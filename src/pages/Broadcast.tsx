@@ -711,6 +711,12 @@ function applyVariables(text: string, values: Record<string, string>) {
   return text.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, variable: string) => values[variable] || `{{${variable}}}`);
 }
 
+function sameVariableValues(left: Record<string, string>, right: Record<string, unknown>) {
+  const leftKeys = Object.keys(left).filter((key) => String(left[key] || "").trim());
+  if (!leftKeys.length) return false;
+  return leftKeys.every((key) => String(left[key] || "").trim() === String(right[key] || right[`{{${key}}}`] || "").trim());
+}
+
 function orderedTemplateVariables(template: SavedTemplate) {
   return templateVariables(template);
 }
@@ -1174,33 +1180,68 @@ export function Broadcast() {
     }
   }
 
-  function updatePlan(nextPlan: BroadcastPlan) {
-    setPlan(nextPlan);
+  function persistPlan(nextPlan: BroadcastPlan) {
     localStorage.setItem(LOCAL_BROADCAST_PLAN_KEY, JSON.stringify(nextPlan));
+    return nextPlan;
+  }
+
+  function updatePlan(nextPlan: BroadcastPlan | ((current: BroadcastPlan) => BroadcastPlan)) {
+    setPlan((current) => {
+      const resolved = typeof nextPlan === "function" ? nextPlan(current) : nextPlan;
+      return persistPlan(resolved);
+    });
   }
 
   function updateCustomization(templateId: string, patch: Partial<TemplateCustomization>) {
-    const current = plan.customizations[templateId] || emptyCustomization();
-    updatePlan({
-      ...plan,
-      customizations: {
-        ...plan.customizations,
-        [templateId]: {
-          ...current,
-          ...patch,
-          variables: patch.variables || current.variables,
+    updatePlan((currentPlan) => {
+      const current = currentPlan.customizations[templateId] || emptyCustomization();
+      return {
+        ...currentPlan,
+        customizations: {
+          ...currentPlan.customizations,
+          [templateId]: {
+            ...current,
+            ...patch,
+            variables: patch.variables || current.variables,
+          },
         },
-      },
+      };
     });
   }
 
   function updateVariable(templateId: string, variable: string, value: string) {
-    const current = plan.customizations[templateId] || emptyCustomization();
-    updateCustomization(templateId, {
-      variables: {
-        ...current.variables,
-        [variable]: value,
-      },
+    updatePlan((currentPlan) => {
+      const current = currentPlan.customizations[templateId] || emptyCustomization();
+      return {
+        ...currentPlan,
+        customizations: {
+          ...currentPlan.customizations,
+          [templateId]: {
+            ...current,
+            variables: {
+              ...current.variables,
+              [variable]: value,
+            },
+          },
+        },
+      };
+    });
+  }
+
+  function toggleTemplate(templateId: string) {
+    updatePlan((currentPlan) => {
+      const selected = currentPlan.templateIds.includes(templateId);
+      const nextCustomizations = { ...currentPlan.customizations };
+      if (selected) {
+        delete nextCustomizations[templateId];
+      } else {
+        nextCustomizations[templateId] = emptyCustomization();
+      }
+      return {
+        ...currentPlan,
+        templateIds: toggleValue(currentPlan.templateIds, templateId),
+        customizations: nextCustomizations,
+      };
     });
   }
 
@@ -1732,6 +1773,34 @@ export function Broadcast() {
   }, [activeCustomizeTemplateId, selectedTemplates]);
 
   useEffect(() => {
+    if (!selectedTemplates.length) return;
+    const nextCustomizations = { ...plan.customizations };
+    let changed = false;
+
+    selectedTemplates.forEach((template) => {
+      const customization = nextCustomizations[template.id];
+      const templateExamples = asRecord(template.variables);
+      if (customization?.variables && sameVariableValues(customization.variables, templateExamples)) {
+        nextCustomizations[template.id] = {
+          ...customization,
+          variables: {},
+        };
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      updatePlan((currentPlan) => ({
+        ...currentPlan,
+        customizations: {
+          ...currentPlan.customizations,
+          ...nextCustomizations,
+        },
+      }));
+    }
+  }, [selectedTemplates]);
+
+  useEffect(() => {
     if (!run.messageIds.length || run.pending <= 0) return;
     const timer = window.setInterval(async () => {
       try {
@@ -1925,7 +1994,7 @@ export function Broadcast() {
                     <button
                       className={selected ? "template-select-row active" : "template-select-row"}
                       key={template.id}
-                      onClick={() => updatePlan({ ...plan, templateIds: toggleValue(plan.templateIds, template.id) })}
+                      onClick={() => toggleTemplate(template.id)}
                       type="button"
                     >
                       <span className="custom-checkbox">{selected ? <Check size={13} /> : null}</span>
