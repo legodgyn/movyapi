@@ -2593,7 +2593,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                         <strong className="success">{campaign.delivered.toLocaleString("pt-BR")}</strong>
                         <strong className="danger">{campaign.failed.toLocaleString("pt-BR")}</strong>
                       </span>
-                      <span>{campaign.lots.toLocaleString("pt-BR")} transmissao(oes)</span>
+                      <span>{campaign.lots.toLocaleString("pt-BR")} {campaign.lots === 1 ? "transmissao" : "transmissoes"}</span>
                       <span className={`campaign-status ${campaign.status}`}>{campaignStatusLabel(campaign.status)}</span>
                       <span>{formatCampaignDate(campaign.createdAt)}</span>
                       <span>{campaign.createdBy}</span>
