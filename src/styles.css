@@ -9635,3 +9635,138 @@ table td,
     min-width: 820px;
   }
 }
+
+/* Broadcast compact pass */
+.broadcast-wizard-page .broadcast-flow-shell {
+  max-width: 1160px;
+}
+
+.broadcast-wizard-page .broadcast-flow-header {
+  padding: 12px 14px;
+}
+
+.broadcast-wizard-page .broadcast-stepper {
+  gap: 6px;
+  grid-template-columns: repeat(5, minmax(116px, 148px));
+  max-width: 760px;
+  width: auto;
+}
+
+.broadcast-wizard-page .wizard-step {
+  min-height: 44px;
+  padding: 7px 9px;
+}
+
+.broadcast-wizard-page .wizard-step span {
+  height: 17px;
+  width: 17px;
+}
+
+.broadcast-wizard-page .wizard-step strong {
+  font-size: 10.5px;
+}
+
+.broadcast-wizard-page .wizard-step small {
+  font-size: 8.5px;
+}
+
+.broadcast-wizard-page .broadcast-wizard-main {
+  gap: 12px;
+  padding: 16px 18px 0;
+}
+
+.broadcast-wizard-page .wizard-section-heading {
+  min-height: 44px;
+  padding: 9px 10px;
+}
+
+.broadcast-wizard-page .wizard-section-heading > svg {
+  padding: 6px;
+}
+
+.broadcast-wizard-page .wizard-section-heading h2 {
+  font-size: 12.5px;
+  margin-bottom: 3px;
+}
+
+.broadcast-wizard-page .wizard-section-heading p {
+  font-size: 10.5px;
+}
+
+.broadcast-wizard-page .broadcast-list-toolbar,
+.broadcast-wizard-page .tag-search-panel,
+.broadcast-wizard-page .tag-binding-panel {
+  padding: 9px 10px;
+}
+
+.broadcast-wizard-page .search-field {
+  min-height: 36px;
+}
+
+.broadcast-wizard-page .search-field input {
+  font-size: 13px;
+}
+
+.broadcast-wizard-page .sender-grid,
+.broadcast-wizard-page .tag-select-grid,
+.broadcast-wizard-page .template-select-list {
+  gap: 7px;
+}
+
+.broadcast-wizard-page .select-card,
+.broadcast-wizard-page .template-select-row,
+.broadcast-wizard-page .tag-card {
+  border-radius: 7px;
+  min-height: 48px;
+  padding: 9px 10px;
+}
+
+.broadcast-wizard-page .sender-grid.broadcast-picker-scroll .select-card,
+.broadcast-wizard-page .template-select-row {
+  min-height: 50px;
+}
+
+.broadcast-wizard-page .select-card-icon {
+  border-radius: 7px;
+  height: 28px;
+  width: 28px;
+}
+
+.broadcast-wizard-page .select-card strong,
+.broadcast-wizard-page .template-select-row strong,
+.broadcast-wizard-page .tag-card strong {
+  font-size: 13px;
+  line-height: 1.15;
+}
+
+.broadcast-wizard-page .select-card small,
+.broadcast-wizard-page .template-select-row small,
+.broadcast-wizard-page .tag-card small,
+.broadcast-wizard-page .template-select-row p {
+  font-size: 10.5px;
+  line-height: 1.3;
+}
+
+.broadcast-wizard-page .template-select-row p {
+  margin-top: 3px;
+  max-height: 30px;
+}
+
+.broadcast-wizard-page .custom-checkbox {
+  border-radius: 5px;
+  height: 18px;
+  width: 18px;
+}
+
+.broadcast-wizard-page .tag-tools {
+  gap: 8px;
+}
+
+.broadcast-wizard-page .tag-binding-list span {
+  font-size: 10.5px;
+  padding: 6px 9px;
+}
+
+.monitor-footer-actions {
+  justify-content: flex-end;
+}

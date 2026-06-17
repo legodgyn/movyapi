@@ -3369,17 +3369,6 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                   </div>
                 </div>
 
-                <div className="button-row run-actions">
-                  <button className="button" disabled={!planReady || runLocked} onClick={startSystemRun}>
-                    <Send size={17} />
-                    {isDispatching ? "Enviando..." : "Criar lote no sistema"}
-                  </button>
-                  <button className="button secondary" onClick={resetRun}>
-                    <RotateCcw size={17} />
-                    Limpar
-                  </button>
-                </div>
-
                 <div className="live-events-card">
                   <div className="contacts-card-header">
                     <h3>Atualizações em tempo real</h3>
@@ -3407,10 +3396,16 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
               Voltar
             </button>
             {activeStep === "monitor" ? (
-              <button className="button" disabled={!planReady || runLocked} onClick={startSystemRun}>
-                <Send size={17} />
-                {isDispatching ? "Enviando..." : "Criar lote no sistema"}
-              </button>
+              <div className="button-row monitor-footer-actions">
+                <button className="button secondary" onClick={resetRun}>
+                  <RotateCcw size={17} />
+                  Limpar
+                </button>
+                <button className="button" disabled={!planReady || runLocked} onClick={startSystemRun}>
+                  <Send size={17} />
+                  {isDispatching ? "Enviando..." : "Disparar Agora"}
+                </button>
+              </div>
             ) : (
               <button
                 className="button"
