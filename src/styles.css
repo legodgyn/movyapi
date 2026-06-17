@@ -3015,7 +3015,7 @@ a {
 }
 
 .retry-page {
-  max-width: none;
+  max-width: 1180px;
   width: 100%;
 }
 
@@ -3084,10 +3084,10 @@ a {
 }
 
 .retry-layout {
-  align-items: stretch;
+  align-items: start;
   display: grid;
-  gap: 22px;
-  grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr);
+  gap: 16px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(300px, .85fr);
 }
 
 .retry-input-card,
@@ -3096,8 +3096,38 @@ a {
   gap: 16px;
 }
 
+.retry-settings-card {
+  align-self: start;
+  min-height: 0;
+}
+
+.retry-page .list-settings-grid {
+  gap: 14px;
+  grid-template-columns: 1fr;
+}
+
+.retry-page .checkbox-stack {
+  background: hsl(var(--background) / .24);
+  border: 1px solid hsl(var(--border) / .8);
+  border-radius: 8px;
+  gap: 0;
+  padding: 4px;
+}
+
+.retry-page .check-row {
+  border-radius: 7px;
+  font-size: 12px;
+  justify-content: flex-start;
+  min-height: 38px;
+  padding: 8px;
+}
+
+.retry-page .check-row:hover {
+  background: hsl(var(--primary) / .08);
+}
+
 .retry-dropzone {
-  min-height: 190px;
+  min-height: 156px;
 }
 
 .retry-dropzone.has-files {
@@ -3106,7 +3136,7 @@ a {
 }
 
 .retry-textarea {
-  min-height: 170px;
+  min-height: 150px;
 }
 
 .retry-live-hint {
@@ -3123,7 +3153,7 @@ a {
 
 .retry-dashboard {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   margin: 4px 0 20px;
 }
@@ -3133,9 +3163,9 @@ a {
   border: 1px solid hsl(var(--border));
   border-radius: 8px;
   display: grid;
-  gap: 6px;
-  min-height: 100px;
-  padding: 14px;
+  gap: 5px;
+  min-height: 82px;
+  padding: 12px;
 }
 
 .retry-metric svg {
@@ -3143,12 +3173,12 @@ a {
 }
 
 .retry-metric strong {
-  font-size: 28px;
+  font-size: 24px;
 }
 
 .retry-metric span {
   color: hsl(var(--muted-foreground));
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .retry-metric.success strong,
@@ -8174,6 +8204,10 @@ a {
   max-width: 1380px;
 }
 
+.content > .retry-page {
+  max-width: 1180px;
+}
+
 .content > .dc-flow-page {
   margin: 0;
   max-width: none;
@@ -8422,6 +8456,10 @@ table td,
   .content > .broadcast-page,
   .content > .analytics-page {
     max-width: 1460px;
+  }
+
+  .content > .retry-page {
+    max-width: 1180px;
   }
 }
 
