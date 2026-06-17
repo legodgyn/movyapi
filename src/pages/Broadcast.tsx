@@ -97,6 +97,14 @@ type BroadcastDistributionItem = {
   sender?: InfobipApi;
   template: SavedTemplate;
   tag: ContactTag;
+  customizationKey: string;
+};
+
+type BroadcastTemplateSelection = {
+  key: string;
+  sender?: InfobipApi;
+  template: SavedTemplate;
+  label: string;
 };
 
 type BroadcastJob = {
@@ -1152,7 +1160,7 @@ function buildDispatchPayload(params: {
     mode: plan.mode,
     lots: distribution.map((item, index) => {
       const lotSender = item.sender || sender;
-      const customization = plan.customizations[item.template.id] || emptyCustomization();
+      const customization = plan.customizations[item.customizationKey] || plan.customizations[item.template.id] || emptyCustomization();
       const lotId = `${lotSender?.id || "manual"}-${item.template.id}-${item.tag.id}`;
       return {
         id: lotId,
@@ -1254,6 +1262,25 @@ export function Broadcast() {
     });
     return Array.from(byId.values());
   }, [availableTemplates, isRandomMode, plan.templateIds, plan.templatesBySender, selectedSenders, templatesForSender]);
+  const selectedTemplateItems = useMemo<BroadcastTemplateSelection[]>(() => {
+    if (!isRandomMode) {
+      return selectedTemplates.map((template) => ({
+        key: template.id,
+        template,
+        label: template.name,
+      }));
+    }
+    return selectedSenders.flatMap((sender) =>
+      templatesForSender(sender)
+        .filter((template) => (plan.templatesBySender[sender.id] || []).includes(template.id))
+        .map((template) => ({
+          key: `${sender.id}:${template.id}`,
+          sender,
+          template,
+          label: `${senderLabel(sender)} • ${template.name}`,
+        })),
+    );
+  }, [isRandomMode, plan.templatesBySender, selectedSenders, selectedTemplates, templatesForSender]);
   const filteredSenders = useMemo(() => {
     const query = senderQuery.trim().toLowerCase();
     return [...senders]
@@ -1307,6 +1334,7 @@ export function Broadcast() {
             selectedTags.map((tag) => ({
               sender,
               template,
+              customizationKey: `${sender.id}:${template.id}`,
               tag,
             })),
           ),
@@ -1316,6 +1344,7 @@ export function Broadcast() {
       .map((template, index) => ({
         sender: selectedSender,
         template,
+        customizationKey: template.id,
         tag: selectedTags[index],
       }))
       .filter((item) => item.tag);
@@ -1325,16 +1354,19 @@ export function Broadcast() {
     () => selectedTags.reduce((sum, tag) => sum + contactCount(tag), 0),
     [selectedTags],
   );
-  const activeCustomizeTemplate = selectedTemplates.find((template) => template.id === activeCustomizeTemplateId) || selectedTemplates[0];
+  const activeCustomizeItem = selectedTemplateItems.find((item) => item.key === activeCustomizeTemplateId) || selectedTemplateItems[0];
+  const activeCustomizeTemplate = activeCustomizeItem?.template;
+  const activeCustomizationKey = activeCustomizeItem?.key || activeCustomizeTemplate?.id || "";
   const customizedTemplates = useMemo(
     () =>
-      selectedTemplates.filter((template) => {
-        const customization = plan.customizations[template.id] || emptyCustomization();
+      selectedTemplateItems.filter((item) => {
+        const customization = plan.customizations[item.key] || emptyCustomization();
+        const template = item.template;
         const hasVariables = templateVariables(template).every((variable) => customization.variables[variable]?.trim());
         const hasMedia = !templateNeedsMedia(template) || Boolean(customization.mediaUrl || customization.mediaName);
         return hasVariables && hasMedia;
       }),
-    [plan.customizations, selectedTemplates],
+    [plan.customizations, selectedTemplateItems],
   );
 
   const randomTemplatesReady =
@@ -1343,7 +1375,7 @@ export function Broadcast() {
   const senderReady = isRandomMode ? selectedSenders.length > 0 : Boolean(plan.senderId);
   const templatesReady = isRandomMode ? randomTemplatesReady : selectedTemplates.length > 0;
   const audienceReady = templatesReady && (isRandomMode ? selectedTags.length > 0 : selectedTags.length === selectedTemplates.length);
-  const customizationsReady = templatesReady && customizedTemplates.length === selectedTemplates.length;
+  const customizationsReady = templatesReady && customizedTemplates.length === selectedTemplateItems.length;
   const planReady = senderReady && templatesReady && audienceReady && customizationsReady;
   const stepIndex = steps.findIndex((step) => step.key === activeStep);
   const awaitingStatuses = run.accepted > 0 && run.pending > 0;
@@ -1466,11 +1498,18 @@ export function Broadcast() {
     updatePlan((currentPlan) => {
       const nextSenderIds = toggleValue(currentPlan.senderIds, senderId);
       const nextTemplatesBySender = { ...currentPlan.templatesBySender };
-      if (!nextSenderIds.includes(senderId)) delete nextTemplatesBySender[senderId];
+      const nextCustomizations = { ...currentPlan.customizations };
+      if (!nextSenderIds.includes(senderId)) {
+        delete nextTemplatesBySender[senderId];
+        Object.keys(nextCustomizations).forEach((key) => {
+          if (key.startsWith(`${senderId}:`)) delete nextCustomizations[key];
+        });
+      }
       return {
         ...currentPlan,
         senderIds: nextSenderIds,
         templatesBySender: nextTemplatesBySender,
+        customizations: nextCustomizations,
       };
     });
   }
@@ -1480,15 +1519,13 @@ export function Broadcast() {
       const currentTemplates = currentPlan.templatesBySender[senderId] || [];
       const selected = currentTemplates.includes(templateId);
       const nextCustomizations = { ...currentPlan.customizations };
+      const customizationKey = `${senderId}:${templateId}`;
       const nextTemplates = toggleValue(currentTemplates, templateId);
-      const stillUsedElsewhere = Object.entries(currentPlan.templatesBySender).some(
-        ([otherSenderId, templateIds]) => otherSenderId !== senderId && templateIds.includes(templateId),
-      );
-      if (selected && !nextTemplates.includes(templateId) && !stillUsedElsewhere && !currentPlan.templateIds.includes(templateId)) {
-        delete nextCustomizations[templateId];
+      if (selected && !nextTemplates.includes(templateId)) {
+        delete nextCustomizations[customizationKey];
       }
       if (!selected) {
-        nextCustomizations[templateId] = nextCustomizations[templateId] || emptyCustomization();
+        nextCustomizations[customizationKey] = nextCustomizations[customizationKey] || emptyCustomization();
       }
       return {
         ...currentPlan,
@@ -1542,8 +1579,8 @@ export function Broadcast() {
     });
   }
 
-  function mediaChoicesForTemplate(template: SavedTemplate) {
-    const expected = resolveHeaderMediaType(template, plan.customizations[template.id] || emptyCustomization());
+  function mediaChoicesForTemplate(template: SavedTemplate, customizationKey = template.id) {
+    const expected = resolveHeaderMediaType(template, plan.customizations[customizationKey] || emptyCustomization());
     return [...mediaLibrary]
       .filter((item) => mediaItemUrl(item))
       .sort((left, right) => {
@@ -1691,7 +1728,7 @@ export function Broadcast() {
             recipient,
             sender: slot.sender,
             template,
-            customization: plan.customizations[template.id] || emptyCustomization(),
+            customization: plan.customizations[`${slot.sender.id}:${template.id}`] || plan.customizations[template.id] || emptyCustomization(),
             lotId: `${slot.sender.id}-${template.id}-${tagId}`,
           });
         });
@@ -1704,7 +1741,7 @@ export function Broadcast() {
               recipient,
               sender: item.sender || senderPool[0],
               template: item.template,
-              customization: plan.customizations[item.template.id] || emptyCustomization(),
+              customization: plan.customizations[item.customizationKey] || plan.customizations[item.template.id] || emptyCustomization(),
               lotId: `${item.sender?.id || senderPool[0]?.id || "manual"}-${item.template.id}-${item.tag.id}`,
             });
           });
@@ -1910,7 +1947,7 @@ export function Broadcast() {
           jobs.push({
             recipient,
             template: item.template,
-            customization: plan.customizations[item.template.id] || emptyCustomization(),
+            customization: plan.customizations[item.customizationKey] || plan.customizations[item.template.id] || emptyCustomization(),
           });
         });
       }
@@ -2125,25 +2162,26 @@ export function Broadcast() {
   }, [isDispatching, run.status]);
 
   useEffect(() => {
-    if (!selectedTemplates.length) {
+    if (!selectedTemplateItems.length) {
       setActiveCustomizeTemplateId("");
       return;
     }
-    if (!selectedTemplates.some((template) => template.id === activeCustomizeTemplateId)) {
-      setActiveCustomizeTemplateId(selectedTemplates[0].id);
+    if (!selectedTemplateItems.some((item) => item.key === activeCustomizeTemplateId)) {
+      setActiveCustomizeTemplateId(selectedTemplateItems[0].key);
     }
-  }, [activeCustomizeTemplateId, selectedTemplates]);
+  }, [activeCustomizeTemplateId, selectedTemplateItems]);
 
   useEffect(() => {
-    if (!selectedTemplates.length) return;
+    if (!selectedTemplateItems.length) return;
     const nextCustomizations = { ...plan.customizations };
     let changed = false;
 
-    selectedTemplates.forEach((template) => {
-      const customization = nextCustomizations[template.id];
+    selectedTemplateItems.forEach((item) => {
+      const customization = nextCustomizations[item.key];
+      const template = item.template;
       const templateExamples = asRecord(template.variables);
       if (customization?.variables && sameVariableValues(customization.variables, templateExamples)) {
-        nextCustomizations[template.id] = {
+        nextCustomizations[item.key] = {
           ...customization,
           variables: {},
         };
@@ -2160,7 +2198,7 @@ export function Broadcast() {
         },
       }));
     }
-  }, [selectedTemplates]);
+  }, [selectedTemplateItems]);
 
   useEffect(() => {
     if (!run.messageIds.length || run.pending <= 0) return;
@@ -2674,11 +2712,11 @@ export function Broadcast() {
                         <div className="broadcast-phone-scroll">
                           {templateNeedsMedia(activeCustomizeTemplate) ? (
                             <div className="broadcast-preview-media">
-                              {(plan.customizations[activeCustomizeTemplate.id] || emptyCustomization()).mediaUrl ? (
+                              {(plan.customizations[activeCustomizationKey] || emptyCustomization()).mediaUrl ? (
                                 templateMediaType(activeCustomizeTemplate) === "video" ? (
-                                  <video src={(plan.customizations[activeCustomizeTemplate.id] || emptyCustomization()).mediaUrl} muted playsInline />
+                                  <video src={(plan.customizations[activeCustomizationKey] || emptyCustomization()).mediaUrl} muted playsInline />
                                 ) : (
-                                  <img alt="Midia selecionada" src={(plan.customizations[activeCustomizeTemplate.id] || emptyCustomization()).mediaUrl} />
+                                  <img alt="Midia selecionada" src={(plan.customizations[activeCustomizationKey] || emptyCustomization()).mediaUrl} />
                                 )
                               ) : (
                                 <div>
@@ -2694,7 +2732,7 @@ export function Broadcast() {
                               {renderTemplateLineBreaks(
                                 applyVariables(
                                   templateText(activeCustomizeTemplate) || "Template sem texto de previa.",
-                                  (plan.customizations[activeCustomizeTemplate.id] || emptyCustomization()).variables,
+                                  (plan.customizations[activeCustomizationKey] || emptyCustomization()).variables,
                                 )
                               )}
                             </p>
@@ -2718,7 +2756,7 @@ export function Broadcast() {
                     <div className="customize-editor broadcast-content-panel">
                     <div className="customize-editor-header">
                       <div>
-                        <h3>{activeCustomizeTemplate.name}</h3>
+                        <h3>{activeCustomizeItem?.label || activeCustomizeTemplate.name}</h3>
                         <p className="hint">{templateNeedsMedia(activeCustomizeTemplate) ? "Este template precisa de mídia." : "Este template não exige mídia."}</p>
                       </div>
                       <span className="template-media-badge">{templateMediaType(activeCustomizeTemplate) || "texto"}</span>
@@ -2726,7 +2764,7 @@ export function Broadcast() {
 
                     <div className="custom-fields-grid">
                       {templateVariables(activeCustomizeTemplate).map((variable) => {
-                        const customization = plan.customizations[activeCustomizeTemplate.id] || emptyCustomization();
+                        const customization = plan.customizations[activeCustomizationKey] || emptyCustomization();
                         return (
                           <label className="field variable-field" key={variable}>
                             <span>{`Variável {{${variable}}}`}</span>
@@ -2735,7 +2773,7 @@ export function Broadcast() {
                               placeholder={variable === "nome" ? "Ex: nome do contato" : `Valor para {{${variable}}}`}
                               rows={3}
                               value={customization.variables[variable] || ""}
-                              onChange={(event) => updateVariable(activeCustomizeTemplate.id, variable, event.target.value)}
+                              onChange={(event) => updateVariable(activeCustomizationKey, variable, event.target.value)}
                             />
                             <div className="variable-format-actions">
                               <button
@@ -2743,7 +2781,7 @@ export function Broadcast() {
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={(event) => {
                                   const textarea = event.currentTarget.closest(".variable-field")?.querySelector("textarea");
-                                  insertVariableBreak(activeCustomizeTemplate.id, variable, 1, textarea);
+                                  insertVariableBreak(activeCustomizationKey, variable, 1, textarea);
                                 }}
                               >
                                 <CornerDownLeft size={14} />
@@ -2754,7 +2792,7 @@ export function Broadcast() {
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={(event) => {
                                   const textarea = event.currentTarget.closest(".variable-field")?.querySelector("textarea");
-                                  insertVariableBreak(activeCustomizeTemplate.id, variable, 2, textarea);
+                                  insertVariableBreak(activeCustomizationKey, variable, 2, textarea);
                                 }}
                               >
                                 <Pilcrow size={14} />
@@ -2783,18 +2821,18 @@ export function Broadcast() {
                         <input
                           className="input"
                           placeholder="https://..."
-                          value={(plan.customizations[activeCustomizeTemplate.id] || emptyCustomization()).mediaUrl}
-                          onChange={(event) => updateCustomization(activeCustomizeTemplate.id, { mediaUrl: event.target.value })}
+                          value={(plan.customizations[activeCustomizationKey] || emptyCustomization()).mediaUrl}
+                          onChange={(event) => updateCustomization(activeCustomizationKey, { mediaUrl: event.target.value })}
                         />
                       </label>
-                      {mediaChoicesForTemplate(activeCustomizeTemplate).length ? (
+                      {mediaChoicesForTemplate(activeCustomizeTemplate, activeCustomizationKey).length ? (
                         <div className="saved-media-picker">
                           <div className="saved-media-picker-head">
                             <strong>Midias salvas</strong>
-                            <span>{mediaChoicesForTemplate(activeCustomizeTemplate).length} opcoes</span>
+                            <span>{mediaChoicesForTemplate(activeCustomizeTemplate, activeCustomizationKey).length} opcoes</span>
                           </div>
                           <div className="saved-media-list">
-                            {mediaChoicesForTemplate(activeCustomizeTemplate).map((item) => {
+                            {mediaChoicesForTemplate(activeCustomizeTemplate, activeCustomizationKey).map((item) => {
                               const kind = mediaItemKind(item);
                               const url = mediaItemUrl(item);
                               return (
@@ -2802,7 +2840,7 @@ export function Broadcast() {
                                   className="saved-media-option"
                                   key={String(item.id || url)}
                                   type="button"
-                                  onClick={() => selectSavedMedia(activeCustomizeTemplate.id, item)}
+                                  onClick={() => selectSavedMedia(activeCustomizationKey, item)}
                                 >
                                   <span className="saved-media-thumb">
                                     {kind === "image" ? <img alt="" src={url} /> : <Image size={16} />}
@@ -2825,18 +2863,18 @@ export function Broadcast() {
                           hidden
                           type="file"
                           accept="image/*,video/*,audio/*,.pdf,.doc,.docx"
-                          onChange={(event) => handleMediaFile(activeCustomizeTemplate.id, event.target.files?.[0])}
+                          onChange={(event) => handleMediaFile(activeCustomizationKey, event.target.files?.[0])}
                         />
                       </label>
-                      {(plan.customizations[activeCustomizeTemplate.id] || emptyCustomization()).mediaName ? (
-                        <p className="hint">Arquivo: {(plan.customizations[activeCustomizeTemplate.id] || emptyCustomization()).mediaName}</p>
+                      {(plan.customizations[activeCustomizationKey] || emptyCustomization()).mediaName ? (
+                        <p className="hint">Arquivo: {(plan.customizations[activeCustomizationKey] || emptyCustomization()).mediaName}</p>
                       ) : null}
                     </div>
                     ) : null}
 
                     <div className="custom-preview-card">
                       <span>Prévia final</span>
-                      <p>{applyVariables(templateText(activeCustomizeTemplate) || "Template sem texto de prévia.", (plan.customizations[activeCustomizeTemplate.id] || emptyCustomization()).variables)}</p>
+                      <p>{applyVariables(templateText(activeCustomizeTemplate) || "Template sem texto de prévia.", (plan.customizations[activeCustomizationKey] || emptyCustomization()).variables)}</p>
                     </div>
                   </div>
                   </>
@@ -3023,7 +3061,7 @@ export function Broadcast() {
 
         <aside className="card broadcast-summary">
           <span className="summary-eyebrow">Resumo do disparo</span>
-          <h3>{selectedTags.length || selectedTemplates.length ? `${selectedTemplates.length} templates, ${selectedTags.length} etiquetas` : "Nada selecionado ainda"}</h3>
+          <h3>{selectedTags.length || selectedTemplateItems.length ? `${selectedTemplateItems.length} templates, ${selectedTags.length} etiquetas` : "Nada selecionado ainda"}</h3>
 
           <div className="summary-block">
             <small>Remetente</small>
@@ -3031,7 +3069,7 @@ export function Broadcast() {
           </div>
           <div className="summary-mini-grid">
             <div>
-              <strong>{selectedTemplates.length}</strong>
+              <strong>{selectedTemplateItems.length}</strong>
               <span>Templates</span>
             </div>
             <div>
@@ -3046,7 +3084,7 @@ export function Broadcast() {
 
           <div className="summary-block">
             <small>Customização</small>
-            <strong>{customizedTemplates.length} de {selectedTemplates.length || 0} template(s) prontos</strong>
+            <strong>{customizedTemplates.length} de {selectedTemplateItems.length || 0} template(s) prontos</strong>
           </div>
 
           <div className="summary-block">
