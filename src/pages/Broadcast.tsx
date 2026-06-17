@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  ChevronDown,
   Check,
   CheckCircle2,
   Clock3,
@@ -13,12 +14,14 @@ import {
   Image,
   Paperclip,
   Pilcrow,
+  Plus,
   RefreshCcw,
   RotateCcw,
   Search,
   Send,
   Smartphone,
   Sparkles,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
@@ -31,6 +34,7 @@ import type { ContactItem, ContactTag, InfobipApi, MediaItem, SavedTemplate } fr
 const LOCAL_BROADCAST_PLAN_KEY = "scaleapi.broadcastPlan";
 const LOCAL_BROADCAST_RUN_KEY = "scaleapi.broadcastRun";
 const LOCAL_BROADCAST_PAYLOAD_KEY = "scaleapi.broadcastLastPayload";
+const LOCAL_BROADCAST_CAMPAIGNS_KEY = "movy.broadcastCampaigns";
 const LOCAL_BM_SETTINGS_KEY = "scaleapi.bmSettings";
 const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
 const LOCAL_CONNECTED_SENDERS_KEY = "movy.connectedSenders";
@@ -91,6 +95,24 @@ type BroadcastRun = {
   messageIds: string[];
   statusByMessageId: Record<string, MessageStatus>;
   startedAt?: string;
+};
+
+type BroadcastCampaignStatus = "draft" | "sending" | "done" | "failed";
+
+type BroadcastCampaign = {
+  id: string;
+  name: string;
+  channel: "Cloud API" | "Janela 24h";
+  description?: string;
+  delivered: number;
+  failed: number;
+  pending: number;
+  total: number;
+  lots: number;
+  status: BroadcastCampaignStatus;
+  createdAt: string;
+  createdBy: string;
+  updatedAt?: string;
 };
 
 type BroadcastDistributionItem = {
@@ -611,6 +633,61 @@ function readStored<T>(key: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function readStoredList<T>(key: string): T[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistBroadcastCampaigns(items: BroadcastCampaign[]) {
+  localStorage.setItem(LOCAL_BROADCAST_CAMPAIGNS_KEY, JSON.stringify(items));
+}
+
+function normalizeCampaignStatus(status: unknown): BroadcastCampaignStatus {
+  const value = String(status || "").toLowerCase();
+  if (value === "sending" || value === "done" || value === "failed") return value;
+  return "draft";
+}
+
+function readBroadcastCampaigns(): BroadcastCampaign[] {
+  return readStoredList<Partial<BroadcastCampaign>>(LOCAL_BROADCAST_CAMPAIGNS_KEY)
+    .filter((item) => item && item.id && item.name)
+    .map((item) => {
+      const channel: BroadcastCampaign["channel"] = item.channel === "Janela 24h" ? "Janela 24h" : "Cloud API";
+      return {
+        id: String(item.id),
+        name: String(item.name),
+        channel,
+        description: String(item.description || ""),
+        delivered: Number(item.delivered || 0),
+        failed: Number(item.failed || 0),
+        pending: Number(item.pending || 0),
+        total: Number(item.total || 0),
+        lots: Number(item.lots || 0),
+        status: normalizeCampaignStatus(item.status),
+        createdAt: item.createdAt || new Date().toISOString(),
+        createdBy: item.createdBy || "Admin",
+        updatedAt: item.updatedAt,
+      };
+    });
+}
+
+function campaignStatusLabel(status: BroadcastCampaignStatus) {
+  if (status === "done") return "Concluida";
+  if (status === "sending") return "Enviando";
+  if (status === "failed") return "Falhou";
+  return "Rascunho";
+}
+
+function formatCampaignDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function contactCount(tag: ContactTag) {
@@ -1227,6 +1304,18 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
   const [loading, setLoading] = useState(false);
   const [isDispatching, setIsDispatching] = useState(false);
   const [status, setStatus] = useState("");
+  const [broadcastView, setBroadcastView] = useState<"dashboard" | "wizard">(mode === "simple" ? "dashboard" : "wizard");
+  const [campaigns, setCampaigns] = useState<BroadcastCampaign[]>(() => readBroadcastCampaigns());
+  const [expandedCampaignId, setExpandedCampaignId] = useState("");
+  const [activeCampaignId, setActiveCampaignId] = useState("");
+  const [campaignQuery, setCampaignQuery] = useState("");
+  const [campaignStatusFilter, setCampaignStatusFilter] = useState<"all" | BroadcastCampaignStatus>("all");
+  const [campaignModalOpen, setCampaignModalOpen] = useState(false);
+  const [campaignForm, setCampaignForm] = useState({
+    name: "",
+    channel: "Cloud API" as BroadcastCampaign["channel"],
+    description: "",
+  });
   const fixedMode = mode;
 
   const selectedSender = useMemo(
@@ -1358,6 +1447,34 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
   const totalContacts = useMemo(
     () => selectedTags.reduce((sum, tag) => sum + contactCount(tag), 0),
     [selectedTags],
+  );
+  const filteredCampaigns = useMemo(() => {
+    const query = campaignQuery.trim().toLowerCase();
+    return campaigns
+      .filter((campaign) => campaign.channel === "Cloud API")
+      .filter((campaign) => campaignStatusFilter === "all" || campaign.status === campaignStatusFilter)
+      .filter((campaign) => {
+        if (!query) return true;
+        return [campaign.name, campaign.description, campaign.createdBy, campaignStatusLabel(campaign.status)]
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+      })
+      .sort((left, right) => new Date(right.updatedAt || right.createdAt).getTime() - new Date(left.updatedAt || left.createdAt).getTime());
+  }, [campaignQuery, campaignStatusFilter, campaigns]);
+  const dashboardTotals = useMemo(
+    () =>
+      campaigns.reduce(
+        (acc, campaign) => ({
+          total: acc.total + campaign.total,
+          delivered: acc.delivered + campaign.delivered,
+          failed: acc.failed + campaign.failed,
+          pending: acc.pending + campaign.pending,
+          lots: acc.lots + campaign.lots,
+        }),
+        { total: 0, delivered: 0, failed: 0, pending: 0, lots: 0 },
+      ),
+    [campaigns],
   );
   const activeCustomizeItem = selectedTemplateItems.find((item) => item.key === activeCustomizeTemplateId) || selectedTemplateItems[0];
   const activeCustomizeTemplate = activeCustomizeItem?.template;
@@ -2138,6 +2255,67 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
     setStatus("Acompanhamento limpo.");
   }
 
+  function updateCampaigns(nextCampaigns: BroadcastCampaign[] | ((current: BroadcastCampaign[]) => BroadcastCampaign[])) {
+    setCampaigns((current) => {
+      const resolved = typeof nextCampaigns === "function" ? nextCampaigns(current) : nextCampaigns;
+      persistBroadcastCampaigns(resolved);
+      return resolved;
+    });
+  }
+
+  function openWizardForCampaign(campaignId: string, reset = true) {
+    setActiveCampaignId(campaignId);
+    setBroadcastView("wizard");
+    setActiveStep("sender");
+    if (reset) {
+      const nextPlan = normalizeBroadcastPlan({ ...defaultPlan, mode: fixedMode });
+      updatePlan(nextPlan);
+      updateRun(defaultRun);
+    }
+    const campaign = campaigns.find((item) => item.id === campaignId);
+    setStatus(campaign ? `Criando lote para ${campaign.name}.` : "Criando novo lote.");
+  }
+
+  function createCampaign() {
+    const name = campaignForm.name.trim();
+    if (!name) {
+      setStatus("Informe um nome para a campanha.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const campaign: BroadcastCampaign = {
+      id: crypto.randomUUID(),
+      name,
+      channel: campaignForm.channel,
+      description: campaignForm.description.trim(),
+      delivered: 0,
+      failed: 0,
+      pending: 0,
+      total: 0,
+      lots: 0,
+      status: "draft",
+      createdAt: now,
+      createdBy: "Admin",
+      updatedAt: now,
+    };
+    updateCampaigns([campaign, ...campaigns]);
+    setCampaignForm({ name: "", channel: "Cloud API", description: "" });
+    setCampaignModalOpen(false);
+    openWizardForCampaign(campaign.id);
+  }
+
+  function deleteCampaign(campaignId: string) {
+    updateCampaigns((current) => current.filter((campaign) => campaign.id !== campaignId));
+    if (activeCampaignId === campaignId) setActiveCampaignId("");
+    if (expandedCampaignId === campaignId) setExpandedCampaignId("");
+  }
+
+  function refreshCampaignDashboard() {
+    const storedCampaigns = readBroadcastCampaigns();
+    setCampaigns(storedCampaigns);
+    setStatus("Status das campanhas atualizado.");
+  }
+
   useEffect(() => {
     loadOptions();
   }, []);
@@ -2153,7 +2331,30 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
       });
     });
     setStatus(fixedMode === "random" ? "Broadcast randomico: alterna remetentes e templates contato a contato." : "Broadcast simples: um remetente assina todo o lote.");
+    if (fixedMode === "random") setBroadcastView("wizard");
   }, [fixedMode]);
+
+  useEffect(() => {
+    if (fixedMode !== "simple" || !activeCampaignId || !run.total) return;
+    const nextStatus: BroadcastCampaignStatus =
+      run.failed && run.failed >= run.total ? "failed" : run.status === "done" ? "done" : run.status === "idle" ? "draft" : "sending";
+    updateCampaigns((current) =>
+      current.map((campaign) =>
+        campaign.id === activeCampaignId
+          ? {
+              ...campaign,
+              delivered: run.delivered || campaign.delivered,
+              failed: run.failed,
+              pending: run.pending,
+              total: run.total,
+              lots: Math.max(campaign.lots, 1),
+              status: nextStatus,
+              updatedAt: new Date().toISOString(),
+            }
+          : campaign,
+      ),
+    );
+  }, [activeCampaignId, fixedMode, run.delivered, run.failed, run.pending, run.status, run.total]);
 
   useEffect(() => {
     const refresh = () => {
@@ -2298,6 +2499,185 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
     return () => window.clearInterval(timer);
   }, [run.messageIds, run.pending]);
 
+  if (fixedMode === "simple" && broadcastView === "dashboard") {
+    return (
+      <main className="template-page broadcast-page broadcast-dashboard-page">
+        <section className="broadcast-dashboard-shell">
+          <header className="broadcast-dashboard-hero">
+            <div>
+              <span className="section-kicker">Transmissoes Cloud</span>
+              <h1>Broadcast Simples</h1>
+              <p>Gerencie campanhas, acompanhe lotes e crie novos disparos pela Cloud API.</p>
+            </div>
+            <div className="broadcast-dashboard-actions">
+              <button className="button secondary" onClick={refreshCampaignDashboard}>
+                <RefreshCcw size={16} />
+                Atualizar status
+              </button>
+              <button className="button" onClick={() => setCampaignModalOpen(true)}>
+                <Plus size={16} />
+                Criar campanha
+              </button>
+            </div>
+          </header>
+
+          <div className="broadcast-dashboard-tabs" role="tablist" aria-label="Tipo de campanha">
+            <button className="active" type="button">Cloud API</button>
+            <button type="button">Janela 24h</button>
+          </div>
+
+          <section className="broadcast-dashboard-kpis">
+            <div>
+              <span>Entregues</span>
+              <strong>{dashboardTotals.delivered.toLocaleString("pt-BR")}</strong>
+            </div>
+            <div>
+              <span>Falhas</span>
+              <strong>{dashboardTotals.failed.toLocaleString("pt-BR")}</strong>
+            </div>
+            <div>
+              <span>Pendentes</span>
+              <strong>{dashboardTotals.pending.toLocaleString("pt-BR")}</strong>
+            </div>
+            <div>
+              <span>Lotes</span>
+              <strong>{dashboardTotals.lots.toLocaleString("pt-BR")}</strong>
+            </div>
+          </section>
+
+          <section className="broadcast-management-card">
+            <div className="broadcast-management-toolbar">
+              <label className="search-field">
+                <Search size={16} />
+                <input
+                  placeholder="Buscar campanha..."
+                  value={campaignQuery}
+                  onChange={(event) => setCampaignQuery(event.target.value)}
+                />
+              </label>
+              <select
+                value={campaignStatusFilter}
+                onChange={(event) => setCampaignStatusFilter(event.target.value as "all" | BroadcastCampaignStatus)}
+              >
+                <option value="all">Todos</option>
+                <option value="draft">Rascunho</option>
+                <option value="sending">Enviando</option>
+                <option value="done">Concluida</option>
+                <option value="failed">Falhou</option>
+              </select>
+            </div>
+
+            <div className="campaign-table">
+              <div className="campaign-table-head">
+                <span>Nome</span>
+                <span>Progresso</span>
+                <span>Lotes</span>
+                <span>Status</span>
+                <span>Criada em</span>
+                <span>Criado por</span>
+              </div>
+              {filteredCampaigns.map((campaign) => {
+                const expanded = expandedCampaignId === campaign.id;
+                return (
+                  <div className={expanded ? "campaign-row expanded" : "campaign-row"} key={campaign.id}>
+                    <button className="campaign-row-main" onClick={() => setExpandedCampaignId(expanded ? "" : campaign.id)} type="button">
+                      <span className="campaign-toggle">
+                        <ChevronDown size={15} />
+                      </span>
+                      <span className="campaign-name">
+                        <MessageCircle size={16} />
+                        <strong>{campaign.name}</strong>
+                        {campaign.description ? <small>{campaign.description}</small> : null}
+                      </span>
+                      <span className="campaign-progress">
+                        <strong className="success">{campaign.delivered.toLocaleString("pt-BR")}</strong>
+                        <strong className="danger">{campaign.failed.toLocaleString("pt-BR")}</strong>
+                      </span>
+                      <span>{campaign.lots.toLocaleString("pt-BR")} transmissao(oes)</span>
+                      <span className={`campaign-status ${campaign.status}`}>{campaignStatusLabel(campaign.status)}</span>
+                      <span>{formatCampaignDate(campaign.createdAt)}</span>
+                      <span>{campaign.createdBy}</span>
+                    </button>
+                    {expanded ? (
+                      <div className="campaign-expanded">
+                        <div>
+                          <strong>Lotes de transmissao</strong>
+                          <span>{campaign.lots.toLocaleString("pt-BR")} lote(s) - {campaign.total.toLocaleString("pt-BR")} destinatario(s)</span>
+                        </div>
+                        <p>{campaign.lots ? "Use Adicionar lote para criar uma nova remessa nesta campanha." : "Nenhum lote criado nesta campanha."}</p>
+                        <div className="campaign-expanded-actions">
+                          <button className="button danger ghost" onClick={() => deleteCampaign(campaign.id)} type="button">
+                            <Trash2 size={15} />
+                            Excluir campanha
+                          </button>
+                          <button className="button secondary" onClick={() => openWizardForCampaign(campaign.id)} type="button">
+                            <Plus size={15} />
+                            Adicionar lote
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+              {!filteredCampaigns.length ? (
+                <div className="campaign-empty">
+                  <MessageCircle size={20} />
+                  <strong>Nenhuma campanha encontrada</strong>
+                  <span>Crie a primeira campanha para abrir o fluxo de disparo simples.</span>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        </section>
+
+        {campaignModalOpen ? (
+          <div className="modal-backdrop">
+            <div className="broadcast-campaign-modal">
+              <button className="icon-button modal-close" onClick={() => setCampaignModalOpen(false)} type="button">
+                <X size={16} />
+              </button>
+              <h2>Criar campanha</h2>
+              <label>
+                Nome da campanha
+                <input
+                  placeholder="Ex: GB 1 MARCO 2026"
+                  value={campaignForm.name}
+                  onChange={(event) => setCampaignForm({ ...campaignForm, name: event.target.value })}
+                />
+              </label>
+              <label>
+                Canal
+                <select
+                  value={campaignForm.channel}
+                  onChange={(event) => setCampaignForm({ ...campaignForm, channel: event.target.value as BroadcastCampaign["channel"] })}
+                >
+                  <option value="Cloud API">Cloud Broadcast</option>
+                  <option value="Janela 24h">Janela 24h</option>
+                </select>
+              </label>
+              <label>
+                Descricao (opcional)
+                <textarea
+                  placeholder="Descricao da campanha..."
+                  value={campaignForm.description}
+                  onChange={(event) => setCampaignForm({ ...campaignForm, description: event.target.value })}
+                />
+              </label>
+              <div className="modal-actions">
+                <button className="button secondary" onClick={() => setCampaignModalOpen(false)} type="button">Cancelar</button>
+                <button className="button" onClick={createCampaign} type="button">
+                  <Plus size={16} />
+                  Criar campanha
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </main>
+    );
+  }
+
   return (
     <main className="template-page broadcast-page broadcast-wizard-page">
       <section className="broadcast-flow-shell">
@@ -2338,7 +2718,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
             <button className="icon-button" disabled={loading} onClick={loadOptions} title="Atualizar dados">
               <RefreshCcw size={16} />
             </button>
-            <button className="icon-button" title="Fechar">
+            <button className="icon-button" onClick={() => fixedMode === "simple" ? setBroadcastView("dashboard") : undefined} title="Fechar">
               <X size={16} />
             </button>
           </div>
