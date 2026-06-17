@@ -7700,6 +7700,20 @@ a {
   font-weight: 800;
 }
 
+.broadcast-customize-v2 .customize-template-list {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 10px;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 8px;
+}
+
+.broadcast-customize-v2 .customize-template-pill {
+  flex: 0 0 min(340px, 72vw);
+}
+
 @media (max-width: 760px) {
   .broadcast-mode-switch {
     grid-template-columns: 1fr;

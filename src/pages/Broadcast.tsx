@@ -2675,21 +2675,22 @@ export function Broadcast() {
 
               <div className="customize-layout broadcast-customize-v2">
                 <div className="customize-template-list">
-                  {selectedTemplates.map((template) => {
-                    const customization = plan.customizations[template.id] || emptyCustomization();
+                  {selectedTemplateItems.map((item) => {
+                    const template = item.template;
+                    const customization = plan.customizations[item.key] || emptyCustomization();
                     const variables = templateVariables(template);
                     const complete =
                       variables.every((variable) => customization.variables[variable]?.trim()) &&
                       (!templateNeedsMedia(template) || Boolean(customization.mediaUrl || customization.mediaName));
                     return (
                       <button
-                        className={activeCustomizeTemplate?.id === template.id ? "customize-template-pill active" : "customize-template-pill"}
-                        key={template.id}
-                        onClick={() => setActiveCustomizeTemplateId(template.id)}
+                        className={activeCustomizeItem?.key === item.key ? "customize-template-pill active" : "customize-template-pill"}
+                        key={item.key}
+                        onClick={() => setActiveCustomizeTemplateId(item.key)}
                         type="button"
                       >
                         <span className={complete ? "mini-status done" : "mini-status"}>{complete ? <Check size={12} /> : variables.length || (templateNeedsMedia(template) ? 1 : 0)}</span>
-                        <strong>{template.name}</strong>
+                        <strong>{item.label}</strong>
                         <small>{variables.length} variáveis {templateNeedsMedia(template) ? "e mídia" : ""}</small>
                       </button>
                     );
