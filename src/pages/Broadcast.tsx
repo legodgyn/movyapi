@@ -849,13 +849,11 @@ function insertTextAtSelection(value: string, insert: string, start?: number | n
 }
 
 function normalizeTemplateParameterText(value: string) {
-  const normalized = String(value || "")
-    .replace(/\v/g, "\n")
-    .replace(/\r\n?/g, "\n")
+  return String(value || "")
+    .replace(/[\v\r\n\u2028\u2029]+/g, " ")
     .replace(/\t+/g, " ")
-    .replace(/[ ]{2,}/g, " ")
+    .replace(/ {2,}/g, " ")
     .trim();
-  return normalized.replace(/\n/g, "\u2028");
 }
 
 function sameVariableValues(left: Record<string, string>, right: Record<string, unknown>) {
