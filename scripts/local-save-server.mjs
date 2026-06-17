@@ -363,7 +363,14 @@ async function dispatchBroadcast(request, response) {
     const runtimeCredentials = asRecord(payload.runtimeCredentials);
     const token = String(runtimeCredentials.accessToken || sender.accessToken || payload.accessToken || "").trim();
     const phoneNumberId = String(runtimeCredentials.phoneNumberId || sender.phoneNumberId || sender.defaultPhoneNumberId || "").trim();
-    if (!token || !phoneNumberId) {
+    const lots = Array.isArray(payload.lots) ? payload.lots : [];
+    const hasRecipientCredentials =
+      Array.isArray(payload.recipients) &&
+      payload.recipients.some((recipient) => {
+        const record = asRecord(recipient);
+        return String(record.accessToken || "").trim() && String(record.phoneNumberId || "").trim();
+      });
+    if ((!token || !phoneNumberId) && !hasRecipientCredentials) {
       sendJson(response, 400, {
         ok: false,
         error: "missing-cloud-credentials",
@@ -372,14 +379,20 @@ async function dispatchBroadcast(request, response) {
       return;
     }
 
-    const lots = Array.isArray(payload.lots) ? payload.lots : [];
     const recipientRows = Array.isArray(payload.recipients)
       ? payload.recipients
       : lots.flatMap((lot) => {
+          const lotRecord = asRecord(lot);
           const template = asRecord(lot.template);
+          const lotSender = asRecord(lotRecord.sender);
           const recipients = Array.isArray(lot.recipients) ? lot.recipients : [];
           return recipients.map((recipient) => ({
             ...asRecord(recipient),
+            lotId: lotRecord.id,
+            senderId: lotSender.id,
+            senderName: lotSender.name,
+            phoneNumberId: lotSender.phoneNumberId,
+            accessToken: lotSender.accessToken,
             templateId: template.id,
             templateName: template.name,
             variables: template.variables,
@@ -398,12 +411,21 @@ async function dispatchBroadcast(request, response) {
       const recipientRecord = asRecord(recipient);
       const phone = normalizeBrazilPhone(recipientRecord.phone || recipientRecord.telefone || recipientRecord.whatsapp);
       const lot =
+        lots.find((item) => String(asRecord(item).id || "") === String(recipientRecord.lotId || "")) ||
+        lots.find((item) => String(asRecord(asRecord(item).sender).id || "") === String(recipientRecord.senderId || "") && String(asRecord(item.template).id || "") === String(recipientRecord.templateId || "")) ||
         lots.find((item) => String(asRecord(item.template).id || "") === String(recipientRecord.templateId || "")) ||
         lots.find((item) => String(asRecord(item.template).name || "") === String(recipientRecord.templateName || "")) ||
         lots[0] ||
         {};
+      const lotSender = asRecord(asRecord(lot).sender);
+      const rowToken = String(recipientRecord.accessToken || lotSender.accessToken || token).trim();
+      const rowPhoneNumberId = String(recipientRecord.phoneNumberId || lotSender.phoneNumberId || phoneNumberId).trim();
       if (!phone) {
         results.push({ status: "failed", phone, errorMessage: "telefone invalido ou vazio" });
+        continue;
+      }
+      if (!rowToken || !rowPhoneNumberId) {
+        results.push({ status: "failed", phone, errorMessage: "remetente sem token ou Phone Number ID" });
         continue;
       }
       try {
@@ -413,7 +435,7 @@ async function dispatchBroadcast(request, response) {
         delete cleanMessagePayload._debug;
         debugMessages.push({ phone, debug: debugInfo, payload: cleanMessagePayload });
         if (!messagePayload.template.name) throw new Error("template sem nome");
-        const result = await sendCloudMessage(phoneNumberId, token, messagePayload);
+        const result = await sendCloudMessage(rowPhoneNumberId, rowToken, messagePayload);
         messageIds.push(result.messageId);
         results.push({
           status: "accepted",

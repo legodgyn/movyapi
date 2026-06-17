@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -66,10 +66,15 @@ type LocalMediaItem = MediaItem & {
   storagePath?: string;
 };
 
+type BroadcastMode = "simple" | "random";
+
 type BroadcastPlan = {
+  mode: BroadcastMode;
   senderId: string;
+  senderIds: string[];
   manualSender: string;
   templateIds: string[];
+  templatesBySender: Record<string, string[]>;
   tagIds: string[];
   customizations: Record<string, TemplateCustomization>;
 };
@@ -86,6 +91,20 @@ type BroadcastRun = {
   messageIds: string[];
   statusByMessageId: Record<string, MessageStatus>;
   startedAt?: string;
+};
+
+type BroadcastDistributionItem = {
+  sender?: InfobipApi;
+  template: SavedTemplate;
+  tag: ContactTag;
+};
+
+type BroadcastJob = {
+  recipient: BroadcastRecipient;
+  template: SavedTemplate;
+  customization: TemplateCustomization;
+  sender: InfobipApi;
+  lotId: string;
 };
 
 type BmSettingsData = {
@@ -141,12 +160,28 @@ const steps: Array<{ key: WizardStep; title: string; subtitle: string }> = [
 ];
 
 const defaultPlan: BroadcastPlan = {
+  mode: "simple",
   senderId: "",
+  senderIds: [],
   manualSender: "",
   templateIds: [],
+  templatesBySender: {},
   tagIds: [],
   customizations: {},
 };
+
+function normalizeBroadcastPlan(value: BroadcastPlan): BroadcastPlan {
+  return {
+    ...defaultPlan,
+    ...value,
+    mode: value?.mode === "random" ? "random" : "simple",
+    senderIds: Array.isArray(value?.senderIds) ? value.senderIds : [],
+    templateIds: Array.isArray(value?.templateIds) ? value.templateIds : [],
+    templatesBySender: asRecord(value?.templatesBySender) as Record<string, string[]>,
+    tagIds: Array.isArray(value?.tagIds) ? value.tagIds : [],
+    customizations: asRecord(value?.customizations) as Record<string, TemplateCustomization>,
+  };
+}
 
 const defaultRun: BroadcastRun = {
   status: "idle",
@@ -1083,7 +1118,7 @@ function buildDispatchPayload(params: {
   sender?: InfobipApi;
   templates: SavedTemplate[];
   tags: ContactTag[];
-  distribution: Array<{ template: SavedTemplate; tag: ContactTag }>;
+  distribution: BroadcastDistributionItem[];
   totalContacts: number;
 }) {
   const { plan, sender, templates, tags, distribution, totalContacts } = params;
@@ -1114,10 +1149,26 @@ function buildDispatchPayload(params: {
       contacts: totalContacts,
       lots: Math.max(1, distribution.length),
     },
+    mode: plan.mode,
     lots: distribution.map((item, index) => {
+      const lotSender = item.sender || sender;
       const customization = plan.customizations[item.template.id] || emptyCustomization();
+      const lotId = `${lotSender?.id || "manual"}-${item.template.id}-${item.tag.id}`;
       return {
+        id: lotId,
         index: index + 1,
+        sender: lotSender
+          ? {
+              id: lotSender.id,
+              name: senderLabel(lotSender),
+              bmName: senderBusinessLabel(lotSender),
+              wabaId: lotSender.defaultWabaId || lotSender.wabaId || "",
+              phoneNumberId: lotSender.phoneNumberId || lotSender.defaultPhoneNumberId || "",
+              phoneNumber: lotSender.phoneNumber || senderNumber(lotSender),
+              accessToken: lotSender.accessToken || lotSender.token || "",
+              apiType: lotSender.api_type || "whatsapp_cloud",
+            }
+          : null,
         template: {
           id: item.template.id,
           name: item.template.name,
@@ -1129,7 +1180,7 @@ function buildDispatchPayload(params: {
           components: item.template.components || [],
           media_type: item.template.media_type || "",
           header_type: item.template.header_type || "",
-          wabaId: item.template.waba_id || sender?.defaultWabaId || sender?.wabaId || "",
+          wabaId: item.template.waba_id || lotSender?.defaultWabaId || lotSender?.wabaId || "",
           variables: customization.variables,
           media: customization.mediaUrl || customization.mediaName
             ? {
@@ -1151,7 +1202,7 @@ function buildDispatchPayload(params: {
 
 export function Broadcast() {
   const [activeStep, setActiveStep] = useState<WizardStep>("sender");
-  const [plan, setPlan] = useState<BroadcastPlan>(() => readStored(LOCAL_BROADCAST_PLAN_KEY, defaultPlan));
+  const [plan, setPlan] = useState<BroadcastPlan>(() => normalizeBroadcastPlan(readStored(LOCAL_BROADCAST_PLAN_KEY, defaultPlan)));
   const [run, setRun] = useState<BroadcastRun>(() => normalizeRun(readStored(LOCAL_BROADCAST_RUN_KEY, defaultRun)));
   const [senders, setSenders] = useState<InfobipApi[]>([]);
   const [templates, setTemplates] = useState<SavedTemplate[]>([]);
@@ -1169,16 +1220,40 @@ export function Broadcast() {
     () => senders.find((sender) => sender.id === plan.senderId),
     [plan.senderId, senders],
   );
-  const availableTemplates = useMemo(() => {
-    const senderWaba = String(selectedSender?.defaultWabaId || selectedSender?.wabaId || "").trim();
-    if (!senderWaba) return templates;
-    const matchedTemplates = templates.filter((template) => !template.waba_id || String(template.waba_id).trim() === senderWaba);
-    return matchedTemplates.length ? matchedTemplates : templates;
-  }, [selectedSender, templates]);
-  const selectedTemplates = useMemo(
-    () => availableTemplates.filter((template) => plan.templateIds.includes(template.id)),
-    [availableTemplates, plan.templateIds],
+  const selectedSenders = useMemo(
+    () => senders.filter((sender) => plan.senderIds.includes(sender.id)),
+    [plan.senderIds, senders],
   );
+  const isRandomMode = plan.mode === "random";
+  const senderPool = isRandomMode ? selectedSenders : selectedSender ? [selectedSender] : [];
+  const templatesForSender = useCallback(
+    (sender?: InfobipApi) => {
+      const senderWaba = String(sender?.defaultWabaId || sender?.wabaId || "").trim();
+      if (!senderWaba) return templates;
+      const matchedTemplates = templates.filter((template) => !template.waba_id || String(template.waba_id).trim() === senderWaba);
+      return matchedTemplates.length ? matchedTemplates : templates;
+    },
+    [templates],
+  );
+  const availableTemplates = useMemo(() => {
+    if (isRandomMode && selectedSenders.length) {
+      const byId = new Map<string, SavedTemplate>();
+      selectedSenders.forEach((sender) => templatesForSender(sender).forEach((template) => byId.set(template.id, template)));
+      return Array.from(byId.values());
+    }
+    return templatesForSender(selectedSender);
+  }, [isRandomMode, selectedSender, selectedSenders, templatesForSender]);
+  const selectedTemplates = useMemo(() => {
+    if (!isRandomMode) return availableTemplates.filter((template) => plan.templateIds.includes(template.id));
+    const byId = new Map<string, SavedTemplate>();
+    selectedSenders.forEach((sender) => {
+      const selectedIds = plan.templatesBySender[sender.id] || [];
+      templatesForSender(sender)
+        .filter((template) => selectedIds.includes(template.id))
+        .forEach((template) => byId.set(template.id, template));
+    });
+    return Array.from(byId.values());
+  }, [availableTemplates, isRandomMode, plan.templateIds, plan.templatesBySender, selectedSenders, templatesForSender]);
   const filteredSenders = useMemo(() => {
     const query = senderQuery.trim().toLowerCase();
     return [...senders]
@@ -1224,13 +1299,27 @@ export function Broadcast() {
 
   const distribution = useMemo(() => {
     if (!selectedTags.length || !selectedTemplates.length) return [];
+    if (isRandomMode) {
+      return selectedSenders.flatMap((sender) =>
+        templatesForSender(sender)
+          .filter((template) => (plan.templatesBySender[sender.id] || []).includes(template.id))
+          .flatMap((template) =>
+            selectedTags.map((tag) => ({
+              sender,
+              template,
+              tag,
+            })),
+          ),
+      );
+    }
     return selectedTemplates
       .map((template, index) => ({
+        sender: selectedSender,
         template,
         tag: selectedTags[index],
       }))
       .filter((item) => item.tag);
-  }, [selectedTags, selectedTemplates]);
+  }, [isRandomMode, plan.templatesBySender, selectedSender, selectedSenders, selectedTags, selectedTemplates, templatesForSender]);
 
   const totalContacts = useMemo(
     () => selectedTags.reduce((sum, tag) => sum + contactCount(tag), 0),
@@ -1248,9 +1337,12 @@ export function Broadcast() {
     [plan.customizations, selectedTemplates],
   );
 
-  const senderReady = Boolean(plan.senderId);
-  const templatesReady = selectedTemplates.length > 0;
-  const audienceReady = templatesReady && selectedTags.length === selectedTemplates.length;
+  const randomTemplatesReady =
+    !isRandomMode ||
+    (selectedSenders.length > 0 && selectedSenders.every((sender) => (plan.templatesBySender[sender.id] || []).length > 0));
+  const senderReady = isRandomMode ? selectedSenders.length > 0 : Boolean(plan.senderId);
+  const templatesReady = isRandomMode ? randomTemplatesReady : selectedTemplates.length > 0;
+  const audienceReady = templatesReady && (isRandomMode ? selectedTags.length > 0 : selectedTags.length === selectedTemplates.length);
   const customizationsReady = templatesReady && customizedTemplates.length === selectedTemplates.length;
   const planReady = senderReady && templatesReady && audienceReady && customizationsReady;
   const stepIndex = steps.findIndex((step) => step.key === activeStep);
@@ -1312,8 +1404,9 @@ export function Broadcast() {
   }
 
   function persistPlan(nextPlan: BroadcastPlan) {
-    localStorage.setItem(LOCAL_BROADCAST_PLAN_KEY, JSON.stringify(nextPlan));
-    return nextPlan;
+    const normalized = normalizeBroadcastPlan(nextPlan);
+    localStorage.setItem(LOCAL_BROADCAST_PLAN_KEY, JSON.stringify(normalized));
+    return normalized;
   }
 
   function updatePlan(nextPlan: BroadcastPlan | ((current: BroadcastPlan) => BroadcastPlan)) {
@@ -1355,6 +1448,55 @@ export function Broadcast() {
             },
           },
         },
+      };
+    });
+  }
+
+  function setBroadcastMode(mode: BroadcastMode) {
+    updatePlan((currentPlan) => ({
+      ...currentPlan,
+      mode,
+      senderIds: mode === "random" ? currentPlan.senderIds.length ? currentPlan.senderIds : currentPlan.senderId ? [currentPlan.senderId] : [] : currentPlan.senderIds,
+      senderId: mode === "simple" ? currentPlan.senderId || currentPlan.senderIds[0] || "" : currentPlan.senderId,
+    }));
+    setStatus(mode === "random" ? "Modo randomico: a fila alterna remetentes e templates contato a contato." : "Modo simples: um remetente assina todo o lote.");
+  }
+
+  function toggleRandomSender(senderId: string) {
+    updatePlan((currentPlan) => {
+      const nextSenderIds = toggleValue(currentPlan.senderIds, senderId);
+      const nextTemplatesBySender = { ...currentPlan.templatesBySender };
+      if (!nextSenderIds.includes(senderId)) delete nextTemplatesBySender[senderId];
+      return {
+        ...currentPlan,
+        senderIds: nextSenderIds,
+        templatesBySender: nextTemplatesBySender,
+      };
+    });
+  }
+
+  function toggleTemplateForSender(senderId: string, templateId: string) {
+    updatePlan((currentPlan) => {
+      const currentTemplates = currentPlan.templatesBySender[senderId] || [];
+      const selected = currentTemplates.includes(templateId);
+      const nextCustomizations = { ...currentPlan.customizations };
+      const nextTemplates = toggleValue(currentTemplates, templateId);
+      const stillUsedElsewhere = Object.entries(currentPlan.templatesBySender).some(
+        ([otherSenderId, templateIds]) => otherSenderId !== senderId && templateIds.includes(templateId),
+      );
+      if (selected && !nextTemplates.includes(templateId) && !stillUsedElsewhere && !currentPlan.templateIds.includes(templateId)) {
+        delete nextCustomizations[templateId];
+      }
+      if (!selected) {
+        nextCustomizations[templateId] = nextCustomizations[templateId] || emptyCustomization();
+      }
+      return {
+        ...currentPlan,
+        templatesBySender: {
+          ...currentPlan.templatesBySender,
+          [senderId]: nextTemplates,
+        },
+        customizations: nextCustomizations,
       };
     });
   }
@@ -1422,7 +1564,7 @@ export function Broadcast() {
 
   function toggleTag(tagId: string) {
     const isSelected = plan.tagIds.includes(tagId);
-    if (!isSelected && selectedTemplates.length && plan.tagIds.length >= selectedTemplates.length) {
+    if (!isRandomMode && !isSelected && selectedTemplates.length && plan.tagIds.length >= selectedTemplates.length) {
       setStatus(`Você selecionou ${selectedTemplates.length} template(s). Remova uma etiqueta antes de escolher outra.`);
       return;
     }
@@ -1489,7 +1631,7 @@ export function Broadcast() {
       setStatus("Escolha remetente, templates, etiquetas e complete as customizacoes antes de iniciar.");
       return;
     }
-    if (!selectedSender) {
+    if (!senderPool.length) {
       setStatus("Selecione um remetente conectado antes de disparar.");
       return;
     }
@@ -1500,34 +1642,73 @@ export function Broadcast() {
 
     const payload = buildDispatchPayload({
       plan,
-      sender: selectedSender,
+      sender: senderPool[0],
       templates: selectedTemplates,
       tags: selectedTags,
       distribution,
       totalContacts,
     }) as Record<string, unknown>;
-    const account = findAccountForSender(selectedSender);
-    const phoneNumberId = String(selectedSender.phoneNumberId || selectedSender.defaultPhoneNumberId || account?.phoneNumberId || account?.defaultPhoneNumberId || "").trim();
-    const accessToken = String(selectedSender.accessToken || selectedSender.token || account?.accessToken || "").trim();
-    if (!phoneNumberId || !accessToken) {
+    const missingCredentials = senderPool.filter((sender) => {
+      const account = findAccountForSender(sender);
+      const phoneNumberId = String(sender.phoneNumberId || sender.defaultPhoneNumberId || account?.phoneNumberId || account?.defaultPhoneNumberId || "").trim();
+      const accessToken = String(sender.accessToken || sender.token || account?.accessToken || "").trim();
+      return !phoneNumberId || !accessToken;
+    });
+    if (missingCredentials.length) {
       setIsDispatching(false);
-      setStatus("Remetente sem Phone Number ID ou token da BM. Confira Configuracoes BM e Registrar Remetente.");
+      setStatus(`Remetente sem Phone Number ID ou token: ${missingCredentials.map(senderLabel).join(", ")}. Confira Configuracoes BM e Registrar Remetente.`);
       return;
     }
+    const primaryAccount = findAccountForSender(senderPool[0]);
+    const phoneNumberId = String(senderPool[0].phoneNumberId || senderPool[0].defaultPhoneNumberId || primaryAccount?.phoneNumberId || primaryAccount?.defaultPhoneNumberId || "").trim();
+    const accessToken = String(senderPool[0].accessToken || senderPool[0].token || primaryAccount?.accessToken || "").trim();
 
-    const jobs: Array<{ recipient: BroadcastRecipient; template: SavedTemplate; customization: TemplateCustomization }> = [];
+    const jobs: BroadcastJob[] = [];
     const recipientsByTag = new Map<string, BroadcastRecipient[]>();
     try {
-      for (const item of distribution) {
-        const recipients = await fetchTagRecipients(item.tag);
-        recipientsByTag.set(item.tag.id, recipients);
-        recipients.forEach((recipient) => {
+      if (isRandomMode) {
+        const allRecipients: BroadcastRecipient[] = [];
+        for (const tag of selectedTags) {
+          const recipients = await fetchTagRecipients(tag);
+          recipientsByTag.set(tag.id, recipients);
+          allRecipients.push(...recipients);
+        }
+        const senderSlots = selectedSenders
+          .map((sender) => ({
+            sender,
+            cursor: 0,
+            templates: templatesForSender(sender).filter((template) => (plan.templatesBySender[sender.id] || []).includes(template.id)),
+          }))
+          .filter((slot) => slot.templates.length);
+        if (!senderSlots.length) throw new Error("nenhum template selecionado por remetente");
+
+        allRecipients.forEach((recipient, index) => {
+          const slot = senderSlots[index % senderSlots.length];
+          const template = slot.templates[slot.cursor % slot.templates.length];
+          slot.cursor += 1;
+          const tagId = String(recipient.tagId || selectedTags[0]?.id || "");
           jobs.push({
             recipient,
-            template: item.template,
-            customization: plan.customizations[item.template.id] || emptyCustomization(),
+            sender: slot.sender,
+            template,
+            customization: plan.customizations[template.id] || emptyCustomization(),
+            lotId: `${slot.sender.id}-${template.id}-${tagId}`,
           });
         });
+      } else {
+        for (const item of distribution) {
+          const recipients = await fetchTagRecipients(item.tag);
+          recipientsByTag.set(item.tag.id, recipients);
+          recipients.forEach((recipient) => {
+            jobs.push({
+              recipient,
+              sender: item.sender || senderPool[0],
+              template: item.template,
+              customization: plan.customizations[item.template.id] || emptyCustomization(),
+              lotId: `${item.sender?.id || senderPool[0]?.id || "manual"}-${item.template.id}-${item.tag.id}`,
+            });
+          });
+        }
       }
     } catch (error) {
       setIsDispatching(false);
@@ -1552,18 +1733,28 @@ export function Broadcast() {
       recipients: total,
       lots: Math.max(1, distribution.length),
     };
+    const lotRows = new Map<string, BroadcastJob[]>();
+    jobs.forEach((job) => {
+      const key = job.lotId;
+      lotRows.set(key, [...(lotRows.get(key) || []), job]);
+    });
     payload.lots = lots.map((lot) => {
       const audience = asRecord(lot.audience);
-      const tagId = String(audience.tagId || "");
-      const recipients = recipientsByTag.get(tagId) || [];
+      const template = asRecord(lot.template);
+      const lotSender = asRecord(lot.sender);
+      const lotKey = `${String(lotSender.id || senderPool[0]?.id || "manual")}-${String(template.id || "")}-${String(audience.tagId || "")}`;
+      const recipients = lotRows.get(lotKey) || [];
       return {
         ...lot,
-        recipients: recipients.map((recipient) => ({
-          id: recipient.id,
-          name: recipient.name || recipient.nome || "",
-          phone: normalizeRecipientPhone(recipient.phone),
-          tagId: recipient.tagId,
-          tagName: recipient.tagName,
+        recipients: recipients.map((job) => ({
+          id: job.recipient.id,
+          name: job.recipient.name || job.recipient.nome || "",
+          phone: normalizeRecipientPhone(job.recipient.phone),
+          tagId: job.recipient.tagId,
+          tagName: job.recipient.tagName,
+          templateId: job.template.id,
+          templateName: job.template.name,
+          variables: job.customization.variables,
         })),
       };
     });
@@ -1573,6 +1764,11 @@ export function Broadcast() {
       phone: normalizeRecipientPhone(job.recipient.phone),
       tagId: job.recipient.tagId,
       tagName: job.recipient.tagName,
+      lotId: job.lotId,
+      senderId: job.sender.id,
+      senderName: senderLabel(job.sender),
+      phoneNumberId: job.sender.phoneNumberId || job.sender.defaultPhoneNumberId || findAccountForSender(job.sender)?.phoneNumberId || findAccountForSender(job.sender)?.defaultPhoneNumberId || "",
+      accessToken: job.sender.accessToken || job.sender.token || findAccountForSender(job.sender)?.accessToken || "",
       templateId: job.template.id,
       templateName: job.template.name,
       variables: job.customization.variables,
@@ -2102,6 +2298,25 @@ export function Broadcast() {
           </div>
         </header>
 
+        <div className="broadcast-mode-switch">
+          <button
+            className={plan.mode === "simple" ? "broadcast-mode-card active" : "broadcast-mode-card"}
+            type="button"
+            onClick={() => setBroadcastMode("simple")}
+          >
+            <strong>Broadcast Simples</strong>
+            <span>Um remetente, templates e etiquetas vinculadas em ordem.</span>
+          </button>
+          <button
+            className={plan.mode === "random" ? "broadcast-mode-card active" : "broadcast-mode-card"}
+            type="button"
+            onClick={() => setBroadcastMode("random")}
+          >
+            <strong>Broadcast Randomico</strong>
+            <span>Alterna remetentes e templates automaticamente contato a contato.</span>
+          </button>
+        </div>
+
         <section className="broadcast-wizard-layout">
         <div className="card broadcast-wizard-main">
           {activeStep === "sender" ? (
@@ -2128,16 +2343,20 @@ export function Broadcast() {
 
               <div className="sender-grid broadcast-picker-scroll">
                 {filteredSenders.map((sender) => {
-                  const selected = plan.senderId === sender.id;
+                  const selected = isRandomMode ? plan.senderIds.includes(sender.id) : plan.senderId === sender.id;
                   return (
                     <button
                       className={selected ? "select-card active" : "select-card"}
                       key={sender.id}
-                      onClick={() => updatePlan({ ...plan, senderId: sender.id, manualSender: "" })}
+                      onClick={() =>
+                        isRandomMode
+                          ? toggleRandomSender(sender.id)
+                          : updatePlan({ ...plan, senderId: sender.id, manualSender: "" })
+                      }
                       type="button"
                     >
                       <span className="select-card-icon">
-                        <Smartphone size={18} />
+                        {selected && isRandomMode ? <Check size={18} /> : <Smartphone size={18} />}
                       </span>
                       <strong>{senderLabel(sender)}</strong>
                       <small>{senderNumber(sender)}</small>
@@ -2184,24 +2403,62 @@ export function Broadcast() {
               </div>
 
               <div className="template-select-list broadcast-picker-scroll">
-                {filteredTemplates.map((template) => {
-                  const selected = plan.templateIds.includes(template.id);
-                  return (
-                    <button
-                      className={selected ? "template-select-row active" : "template-select-row"}
-                      key={template.id}
-                      onClick={() => toggleTemplate(template.id)}
-                      type="button"
-                    >
-                      <span className="custom-checkbox">{selected ? <Check size={13} /> : null}</span>
-                      <div>
-                        <strong>{template.name}</strong>
-                        <p>{templateText(template) || "Template salvo sem prévia de texto."}</p>
-                      </div>
-                      <small>{templateStatusLabel(template)}</small>
-                    </button>
-                  );
-                })}
+                {isRandomMode
+                  ? selectedSenders.map((sender) => {
+                      const query = templateQuery.trim().toLowerCase();
+                      const senderTemplates = templatesForSender(sender).filter((template) => {
+                        if (!query) return true;
+                        return [template.name, templateText(template), templateStatusLabel(template), String(template.id || "")]
+                          .join(" ")
+                          .toLowerCase()
+                          .includes(query);
+                      });
+                      return (
+                        <div className="random-template-group" key={sender.id}>
+                          <div className="random-template-group-head">
+                            <strong>{senderLabel(sender)}</strong>
+                            <span>{(plan.templatesBySender[sender.id] || []).length} template(s)</span>
+                          </div>
+                          {senderTemplates.map((template) => {
+                            const selected = (plan.templatesBySender[sender.id] || []).includes(template.id);
+                            return (
+                              <button
+                                className={selected ? "template-select-row active" : "template-select-row"}
+                                key={`${sender.id}-${template.id}`}
+                                onClick={() => toggleTemplateForSender(sender.id, template.id)}
+                                type="button"
+                              >
+                                <span className="custom-checkbox">{selected ? <Check size={13} /> : null}</span>
+                                <div>
+                                  <strong>{template.name}</strong>
+                                  <p>{templateText(template) || "Template salvo sem previa de texto."}</p>
+                                </div>
+                                <small>{templateStatusLabel(template)}</small>
+                              </button>
+                            );
+                          })}
+                          {!senderTemplates.length ? <p className="hint">Nenhum template encontrado para este remetente.</p> : null}
+                        </div>
+                      );
+                    })
+                  : filteredTemplates.map((template) => {
+                      const selected = plan.templateIds.includes(template.id);
+                      return (
+                        <button
+                          className={selected ? "template-select-row active" : "template-select-row"}
+                          key={template.id}
+                          onClick={() => toggleTemplate(template.id)}
+                          type="button"
+                        >
+                          <span className="custom-checkbox">{selected ? <Check size={13} /> : null}</span>
+                          <div>
+                            <strong>{template.name}</strong>
+                            <p>{templateText(template) || "Template salvo sem previa de texto."}</p>
+                          </div>
+                          <small>{templateStatusLabel(template)}</small>
+                        </button>
+                      );
+                    })}
                 {!availableTemplates.length ? (
                   <div className="empty-helper">
                     <AlertTriangle size={18} />
@@ -2215,7 +2472,13 @@ export function Broadcast() {
                     </div>
                   </div>
                 ) : null}
-                {availableTemplates.length && !filteredTemplates.length ? (
+                {isRandomMode && !selectedSenders.length ? (
+                  <div className="empty-helper">
+                    <AlertTriangle size={18} />
+                    <p>Selecione pelo menos um remetente antes de escolher templates.</p>
+                  </div>
+                ) : null}
+                {availableTemplates.length && !filteredTemplates.length && !isRandomMode ? (
                   <div className="empty-helper">
                     <Search size={18} />
                     <p>Nenhum template encontrado para essa busca.</p>
@@ -2236,13 +2499,19 @@ export function Broadcast() {
               </div>
 
               <div className="tag-binding-panel">
-                <strong>{selectedTags.length}/{selectedTemplates.length || 1} selecionada(s)</strong>
+                <strong>{selectedTags.length}/{isRandomMode ? "varias" : selectedTemplates.length || 1} selecionada(s)</strong>
                 <div className="tag-binding-list">
-                  {selectedTemplates.map((template, index) => (
-                    <span key={template.id}>
-                      {template.name} {"->"} {selectedTags[index] ? tagDisplayName(selectedTags[index]) : "aguardando..."}
-                    </span>
-                  ))}
+                  {isRandomMode
+                    ? selectedTags.map((tag) => (
+                        <span key={tag.id}>
+                          {tagDisplayName(tag)} {"->"} alternando entre {selectedSenders.length} remetente(s) e {selectedTemplates.length} template(s)
+                        </span>
+                      ))
+                    : selectedTemplates.map((template, index) => (
+                        <span key={template.id}>
+                          {template.name} {"->"} {selectedTags[index] ? tagDisplayName(selectedTags[index]) : "aguardando..."}
+                        </span>
+                      ))}
                   {!selectedTemplates.length ? <span>Selecione templates antes de escolher as etiquetas.</span> : null}
                 </div>
               </div>
@@ -2266,7 +2535,9 @@ export function Broadcast() {
                     onClick={() =>
                       updatePlan({
                         ...plan,
-                        tagIds: Array.from(new Set([...plan.tagIds, ...filteredTags.map((tag) => tag.id)])).slice(0, selectedTemplates.length),
+                        tagIds: isRandomMode
+                          ? Array.from(new Set([...plan.tagIds, ...filteredTags.map((tag) => tag.id)]))
+                          : Array.from(new Set([...plan.tagIds, ...filteredTags.map((tag) => tag.id)])).slice(0, selectedTemplates.length),
                       })
                     }
                     type="button"
@@ -2290,7 +2561,7 @@ export function Broadcast() {
                   return (
                     <button
                       className={selected ? "tag-card active" : "tag-card"}
-                      disabled={!selected && selectedTemplates.length > 0 && plan.tagIds.length >= selectedTemplates.length}
+                      disabled={!isRandomMode && !selected && selectedTemplates.length > 0 && plan.tagIds.length >= selectedTemplates.length}
                       key={tag.id}
                       onClick={() => toggleTag(tag.id)}
                       type="button"
@@ -2594,11 +2865,11 @@ export function Broadcast() {
                   <h3>Resumo do lote</h3>
                   <div className="review-line">
                     <span>Sender:</span>
-                    <strong>{selectedSender ? senderLabel(selectedSender) : plan.manualSender || "-"}</strong>
+                    <strong>{isRandomMode ? `${selectedSenders.length} remetente(s) alternados` : selectedSender ? senderLabel(selectedSender) : plan.manualSender || "-"}</strong>
                   </div>
                   <div className="review-pairs">
                     {distribution.map((item) => (
-                      <span key={`${item.template.id}-${item.tag.id}`}>
+                      <span key={`${item.sender?.id || "sender"}-${item.template.id}-${item.tag.id}`}>
                         {item.template.name} → {tagDisplayName(item.tag)} ({contactCount(item.tag).toLocaleString("pt-BR")})
                       </span>
                     ))}
