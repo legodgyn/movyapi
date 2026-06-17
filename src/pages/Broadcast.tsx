@@ -101,6 +101,7 @@ type BroadcastCampaignStatus = "draft" | "sending" | "done" | "failed";
 
 type BroadcastCampaign = {
   id: string;
+  mode: BroadcastMode;
   name: string;
   channel: "Cloud API" | "Janela 24h";
   description?: string;
@@ -661,6 +662,7 @@ function readBroadcastCampaigns(): BroadcastCampaign[] {
       const channel: BroadcastCampaign["channel"] = item.channel === "Janela 24h" ? "Janela 24h" : "Cloud API";
       return {
         id: String(item.id),
+        mode: item.mode === "random" ? "random" : "simple",
         name: String(item.name),
         channel,
         description: String(item.description || ""),
@@ -1303,7 +1305,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
   const [loading, setLoading] = useState(false);
   const [isDispatching, setIsDispatching] = useState(false);
   const [status, setStatus] = useState("");
-  const [broadcastView, setBroadcastView] = useState<"dashboard" | "wizard">(mode === "simple" ? "dashboard" : "wizard");
+  const [broadcastView, setBroadcastView] = useState<"dashboard" | "wizard">("dashboard");
   const [campaigns, setCampaigns] = useState<BroadcastCampaign[]>(() => readBroadcastCampaigns());
   const [expandedCampaignId, setExpandedCampaignId] = useState("");
   const [activeCampaignId, setActiveCampaignId] = useState("");
@@ -1450,6 +1452,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
   const filteredCampaigns = useMemo(() => {
     const query = campaignQuery.trim().toLowerCase();
     return campaigns
+      .filter((campaign) => campaign.mode === fixedMode)
       .filter((campaign) => campaign.channel === "Cloud API")
       .filter((campaign) => campaignStatusFilter === "all" || campaign.status === campaignStatusFilter)
       .filter((campaign) => {
@@ -1460,20 +1463,22 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
           .includes(query);
       })
       .sort((left, right) => new Date(right.updatedAt || right.createdAt).getTime() - new Date(left.updatedAt || left.createdAt).getTime());
-  }, [campaignQuery, campaignStatusFilter, campaigns]);
+  }, [campaignQuery, campaignStatusFilter, campaigns, fixedMode]);
   const dashboardTotals = useMemo(
     () =>
-      campaigns.reduce(
-        (acc, campaign) => ({
-          total: acc.total + campaign.total,
-          delivered: acc.delivered + campaign.delivered,
-          failed: acc.failed + campaign.failed,
-          pending: acc.pending + campaign.pending,
-          lots: acc.lots + campaign.lots,
-        }),
-        { total: 0, delivered: 0, failed: 0, pending: 0, lots: 0 },
-      ),
-    [campaigns],
+      campaigns
+        .filter((campaign) => campaign.mode === fixedMode)
+        .reduce(
+          (acc, campaign) => ({
+            total: acc.total + campaign.total,
+            delivered: acc.delivered + campaign.delivered,
+            failed: acc.failed + campaign.failed,
+            pending: acc.pending + campaign.pending,
+            lots: acc.lots + campaign.lots,
+          }),
+          { total: 0, delivered: 0, failed: 0, pending: 0, lots: 0 },
+        ),
+    [campaigns, fixedMode],
   );
   const activeCustomizeItem = selectedTemplateItems.find((item) => item.key === activeCustomizeTemplateId) || selectedTemplateItems[0];
   const activeCustomizeTemplate = activeCustomizeItem?.template;
@@ -1732,10 +1737,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
 
   function goBack() {
     if (stepIndex === 0) {
-      if (fixedMode === "simple") {
-        setBroadcastView("dashboard");
-        return;
-      }
+      setBroadcastView("dashboard");
       return;
     }
     const previous = steps[Math.max(stepIndex - 1, 0)];
@@ -2291,6 +2293,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
     const now = new Date().toISOString();
     const campaign: BroadcastCampaign = {
       id: crypto.randomUUID(),
+      mode: fixedMode,
       name,
       channel: campaignForm.channel,
       description: campaignForm.description.trim(),
@@ -2337,11 +2340,10 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
       });
     });
     setStatus(fixedMode === "random" ? "Broadcast randomico: alterna remetentes e templates contato a contato." : "Broadcast simples: um remetente assina todo o lote.");
-    if (fixedMode === "random") setBroadcastView("wizard");
   }, [fixedMode]);
 
   useEffect(() => {
-    if (fixedMode !== "simple" || !activeCampaignId || !run.total) return;
+    if (!activeCampaignId || !run.total) return;
     const nextStatus: BroadcastCampaignStatus =
       run.failed && run.failed >= run.total ? "failed" : run.status === "done" ? "done" : run.status === "idle" ? "draft" : "sending";
     updateCampaigns((current) =>
@@ -2360,7 +2362,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
           : campaign,
       ),
     );
-  }, [activeCampaignId, fixedMode, run.delivered, run.failed, run.pending, run.status, run.total]);
+  }, [activeCampaignId, run.delivered, run.failed, run.pending, run.status, run.total]);
 
   useEffect(() => {
     const refresh = () => {
@@ -2505,15 +2507,20 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
     return () => window.clearInterval(timer);
   }, [run.messageIds, run.pending]);
 
-  if (fixedMode === "simple" && broadcastView === "dashboard") {
+  if (broadcastView === "dashboard") {
+    const dashboardTitle = fixedMode === "random" ? "Broadcast Randômico" : "Broadcast Simples";
+    const dashboardDescription =
+      fixedMode === "random"
+        ? "Gerencie campanhas com alternância automática entre BMs, remetentes e templates."
+        : "Gerencie campanhas, acompanhe lotes e crie novos disparos pela Cloud API.";
     return (
       <main className="template-page broadcast-page broadcast-dashboard-page">
         <section className="broadcast-dashboard-shell">
           <header className="broadcast-dashboard-hero">
             <div>
               <span className="section-kicker">Transmissoes Cloud</span>
-              <h1>Broadcast Simples</h1>
-              <p>Gerencie campanhas, acompanhe lotes e crie novos disparos pela Cloud API.</p>
+              <h1>{dashboardTitle}</h1>
+              <p>{dashboardDescription}</p>
             </div>
             <div className="broadcast-dashboard-actions">
               <button className="button secondary" onClick={refreshCampaignDashboard}>
@@ -2630,7 +2637,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                 <div className="campaign-empty">
                   <MessageCircle size={20} />
                   <strong>Nenhuma campanha encontrada</strong>
-                  <span>Crie a primeira campanha para abrir o fluxo de disparo simples.</span>
+                  <span>Crie a primeira campanha para abrir o fluxo de {fixedMode === "random" ? "broadcast randômico" : "broadcast simples"}.</span>
                 </div>
               ) : null}
             </div>
@@ -2724,7 +2731,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
             <button className="icon-button" disabled={loading} onClick={loadOptions} title="Atualizar dados">
               <RefreshCcw size={16} />
             </button>
-            <button className="icon-button" onClick={() => fixedMode === "simple" ? setBroadcastView("dashboard") : undefined} title="Fechar">
+            <button className="icon-button" onClick={() => setBroadcastView("dashboard")} title="Fechar">
               <X size={16} />
             </button>
           </div>
@@ -3436,7 +3443,15 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
 
           <div className="summary-block">
             <small>Remetente</small>
-            <strong>{selectedSender ? senderLabel(selectedSender) : plan.manualSender || "Selecione um remetente"}</strong>
+            <strong>
+              {isRandomMode
+                ? selectedSenders.length
+                  ? `${selectedSenders.length} remetente(s) alternados`
+                  : "Selecione os remetentes"
+                : selectedSender
+                  ? senderLabel(selectedSender)
+                  : plan.manualSender || "Selecione um remetente"}
+            </strong>
           </div>
           <div className="summary-mini-grid">
             <div>
