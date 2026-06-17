@@ -1732,6 +1732,13 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
   }
 
   function goBack() {
+    if (stepIndex === 0) {
+      if (fixedMode === "simple") {
+        setBroadcastView("dashboard");
+        return;
+      }
+      return;
+    }
     const previous = steps[Math.max(stepIndex - 1, 0)];
     setActiveStep(previous.key);
   }
@@ -3391,7 +3398,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
           ) : null}
 
           <div className="wizard-footer">
-            <button className="button secondary" disabled={stepIndex === 0} onClick={goBack}>
+            <button className="button secondary" onClick={goBack}>
               <ArrowLeft size={17} />
               Voltar
             </button>
