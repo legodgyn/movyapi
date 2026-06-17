@@ -28,12 +28,14 @@ const host = process.env.SCALEAPI_SAVE_HOST || "127.0.0.1";
 const downloadsDir = join(homedir(), "Downloads");
 const checkNumberApiKey = process.env.CHECKNUMBER_API_KEY || "";
 const sms24hApiKey = process.env.SMS24H_API_KEY || "";
+const sisbratelApiKey = process.env.SISBRATEL_API_KEY || "";
 const metaWebhookVerifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN || "";
 const databasePath = process.env.MOVY_DB_PATH || join(process.cwd(), "data", "movyapi.sqlite");
 const storageFilePath = process.env.MOVY_STORAGE_FILE || join(process.cwd(), "data", "storage.json");
 const uploadsDir = process.env.MOVY_UPLOADS_DIR || join(process.cwd(), "data", "uploads");
 const checkNumberBaseUrl = "https://api.checknumber.ai/v1";
 const sms24hBaseUrl = process.env.SMS24H_API_BASE_URL || "https://api.sms24h.org/stubs/handler_api";
+const sisbratelBaseUrl = process.env.SISBRATEL_API_BASE_URL || "https://app.sisbratel.com/api/external";
 const whatsappStatuses = new Map();
 const graphApiBase = "https://graph.facebook.com/v24.0";
 let lastBroadcastDebug = null;
@@ -195,6 +197,157 @@ async function handleSms24h(request, response) {
     sendJson(response, 404, { ok: false, error: "sms24h-route-not-found" });
   } catch (error) {
     sendJson(response, error?.statusCode || 500, { ok: false, error: error instanceof Error ? error.message : "sms24h-proxy-failed" });
+  }
+}
+
+async function callSisbratel(path, options = {}) {
+  if (!sisbratelApiKey) {
+    const error = new Error("SISBRATEL_API_KEY nao configurada no servidor");
+    error.statusCode = 500;
+    throw error;
+  }
+  const upstream = await fetch(`${sisbratelBaseUrl.replace(/\/$/, "")}${path}`, {
+    method: options.method || "GET",
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      "Content-Type": "application/json",
+      "User-Agent": "Mozilla/5.0 MovyApi/1.0",
+      "X-API-Key": sisbratelApiKey,
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const raw = await upstream.text();
+  let parsed = {};
+  try {
+    parsed = raw ? JSON.parse(raw) : {};
+  } catch {
+    parsed = { raw };
+  }
+  if (!upstream.ok) {
+    const message =
+      parsed?.message ||
+      parsed?.error ||
+      raw?.trim() ||
+      `SisBratel retornou HTTP ${upstream.status}`;
+    const error = new Error(message);
+    error.statusCode = upstream.status;
+    error.payload = parsed;
+    throw error;
+  }
+  return { upstreamStatus: upstream.status, parsed, raw };
+}
+
+function normalizeSisbratelActivation(item) {
+  const source = item || {};
+  const id = source.activationId || source.id || source.activation_id || "";
+  return {
+    id: String(id),
+    internalId: source.id ? String(source.id) : "",
+    activationId: String(id),
+    number: String(source.phoneNumber || source.phone_number || source.number || ""),
+    serviceCode: String(source.serviceCode || source.service_code || "wa"),
+    serviceName: String(source.serviceName || source.service_name || "WhatsApp"),
+    status: String(source.status || ""),
+    code: source.smsCode || source.sms_code || source.code || null,
+    price: typeof source.price === "number" ? source.price : Number(source.price || source.metadata?.finalPrice || 0),
+    ddd: source.ddd || source.metadata?.ddd || null,
+    createdAt: source.createdAt || source.created_at || "",
+    expiresAt: source.expiresAt || source.expires_at || "",
+    raw: source,
+  };
+}
+
+function normalizeSisbratelList(payload) {
+  const list = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.items)
+      ? payload.items
+      : Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload?.activations)
+          ? payload.activations
+          : Array.isArray(payload?.history)
+            ? payload.history
+            : [];
+  return list.map(normalizeSisbratelActivation).filter((item) => item.id || item.number);
+}
+
+async function handleSisbratel(request, response) {
+  try {
+    const url = new URL(request.url || "", `http://${request.headers.host}`);
+
+    if (request.method === "GET" && url.pathname === "/sisbratel/balance") {
+      const result = await callSisbratel("/balance");
+      sendJson(response, 200, { ok: true, ...result.parsed });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/sisbratel/services") {
+      const result = await callSisbratel("/services");
+      const services = Array.isArray(result.parsed)
+        ? result.parsed
+        : Array.isArray(result.parsed?.services)
+          ? result.parsed.services
+          : Array.isArray(result.parsed?.data)
+            ? result.parsed.data
+            : [];
+      const whatsapp = services.find((service) => String(service.code || service.serviceCode || "").toLowerCase() === "wa");
+      sendJson(response, 200, { ok: true, services, whatsapp });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/sisbratel/activations") {
+      const result = await callSisbratel("/activations");
+      sendJson(response, 200, { ok: true, activations: normalizeSisbratelList(result.parsed), raw: result.parsed });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/sisbratel/history") {
+      const result = await callSisbratel("/history");
+      sendJson(response, 200, { ok: true, history: normalizeSisbratelList(result.parsed), raw: result.parsed });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/sisbratel/orders") {
+      const body = JSON.parse((await readRequestBody(request)).toString("utf8") || "{}");
+      const ddd = String(body.ddd || "").replace(/\D/g, "").slice(0, 2);
+      const payload = {
+        serviceCode: "wa",
+        serviceName: "WhatsApp",
+        ...(ddd ? { ddd } : {}),
+      };
+      const result = await callSisbratel("/buy", { method: "POST", body: payload });
+      sendJson(response, 200, { ok: true, order: normalizeSisbratelActivation(result.parsed), raw: result.parsed });
+      return;
+    }
+
+    const orderMatch = url.pathname.match(/^\/sisbratel\/orders\/([^/]+)$/);
+    if (request.method === "GET" && orderMatch) {
+      const id = decodeURIComponent(orderMatch[1]);
+      const result = await callSisbratel(`/status/${encodeURIComponent(id)}`);
+      sendJson(response, 200, { ok: true, order: normalizeSisbratelActivation({ activationId: id, ...result.parsed }), raw: result.parsed });
+      return;
+    }
+
+    const actionMatch = url.pathname.match(/^\/sisbratel\/orders\/([^/]+)\/(cancel|complete|renew|reactivate)$/);
+    if (request.method === "POST" && actionMatch) {
+      const id = decodeURIComponent(actionMatch[1]);
+      const action = actionMatch[2];
+      const result = await callSisbratel(`/${action}`, {
+        method: "POST",
+        body: { activationId: id, id },
+      });
+      sendJson(response, 200, { ok: true, order: normalizeSisbratelActivation({ activationId: id, ...result.parsed }), raw: result.parsed });
+      return;
+    }
+
+    sendJson(response, 404, { ok: false, error: "sisbratel-route-not-found" });
+  } catch (error) {
+    sendJson(response, error?.statusCode || 500, {
+      ok: false,
+      error: error instanceof Error ? error.message : "sisbratel-proxy-failed",
+      details: error?.payload || null,
+    });
   }
 }
 
@@ -842,6 +995,11 @@ createServer(async (request, response) => {
 
   if (request.url?.startsWith("/sms24h/")) {
     await handleSms24h(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/sisbratel/")) {
+    await handleSisbratel(request, response);
     return;
   }
 

@@ -71,7 +71,11 @@ const titles: Record<string, { title: string; description: string }> = {
     description: "Conecte Business Manager, WABA e Cloud API",
   },
   "/admin/virtual-numbers": {
-    title: "Numeros Virtuais",
+    title: "Numeros SMS24h",
+    description: "Compre numeros WhatsApp Brasil e acompanhe codigos",
+  },
+  "/admin/sisbratel-numbers": {
+    title: "Numeros SisBratel",
     description: "Compre numeros WhatsApp Brasil e acompanhe codigos",
   },
   "/campaigns": {

@@ -21,6 +21,7 @@ import { RegisteredSenders } from "./pages/RegisteredSenders";
 import { Security } from "./pages/Security";
 import { SenderRegistration } from "./pages/SenderRegistration";
 import { SenderWabas } from "./pages/SenderWabas";
+import { SisbratelNumbers } from "./pages/SisbratelNumbers";
 import { TemplateCreator } from "./pages/TemplateCreator";
 import { VirtualNumbers } from "./pages/VirtualNumbers";
 
@@ -64,6 +65,7 @@ export function App() {
         <Route path="/admin/sender-registration" element={<SenderRegistration />} />
         <Route path="/admin/registered-senders" element={<RegisteredSenders />} />
         <Route path="/admin/virtual-numbers" element={<VirtualNumbers />} />
+        <Route path="/admin/sisbratel-numbers" element={<SisbratelNumbers />} />
         <Route path="/transmissoes" element={<Broadcast mode="simple" />} />
         <Route path="/admin/v1/users" element={<AdminUsersV1 />} />
         <Route path="/admin/v1/security" element={<Security />} />
