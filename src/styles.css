@@ -8475,3 +8475,338 @@ table td,
     max-width: none;
   }
 }
+
+.virtual-page {
+  width: min(1180px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 32px 0 52px;
+}
+
+.virtual-hero,
+.virtual-card,
+.virtual-metric {
+  border: 1px solid hsl(var(--border) / .72);
+  background:
+    linear-gradient(145deg, hsl(var(--card) / .86), hsl(var(--primary) / .055)),
+    hsl(var(--background));
+  box-shadow: 0 18px 56px hsl(var(--primary) / .08);
+}
+
+.virtual-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-radius: 18px;
+  padding: 22px 24px;
+  margin-bottom: 18px;
+}
+
+.virtual-hero h1 {
+  margin: 5px 0 6px;
+  font-size: 1.45rem;
+  letter-spacing: 0;
+}
+
+.virtual-hero p,
+.virtual-card-title p,
+.virtual-empty span,
+.virtual-order small,
+.virtual-history-row span,
+.virtual-history-row small {
+  color: hsl(var(--muted-foreground));
+}
+
+.virtual-hero p {
+  max-width: 680px;
+  margin: 0;
+  font-size: .9rem;
+}
+
+.virtual-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.virtual-metric {
+  min-height: 92px;
+  border-radius: 16px;
+  padding: 16px;
+  display: grid;
+  gap: 6px;
+}
+
+.virtual-metric svg {
+  color: hsl(var(--primary));
+}
+
+.virtual-metric span {
+  color: hsl(var(--muted-foreground));
+  font-size: .74rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.virtual-metric strong {
+  font-size: 1.6rem;
+}
+
+.virtual-metric.active {
+  border-color: hsl(var(--success) / .45);
+  background:
+    linear-gradient(145deg, hsl(var(--success) / .14), hsl(var(--card) / .88)),
+    hsl(var(--background));
+}
+
+.virtual-grid {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.virtual-card {
+  border-radius: 18px;
+  padding: 18px;
+}
+
+.virtual-card-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.virtual-card-title > svg {
+  flex: 0 0 auto;
+  color: hsl(var(--primary));
+  border-radius: 12px;
+  padding: 9px;
+  width: 38px;
+  height: 38px;
+  background: hsl(var(--primary) / .12);
+}
+
+.virtual-card-title h2 {
+  margin: 0 0 3px;
+  font-size: 1rem;
+}
+
+.virtual-card-title p {
+  margin: 0;
+  font-size: .82rem;
+}
+
+.virtual-card-title .btn {
+  margin-left: auto;
+}
+
+.virtual-choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.virtual-choice button,
+.ddd-grid button {
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / .22);
+  color: hsl(var(--foreground));
+  border-radius: 14px;
+  cursor: pointer;
+  transition: .18s ease;
+}
+
+.virtual-choice button {
+  min-height: 92px;
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+  padding: 14px;
+  font-weight: 800;
+}
+
+.virtual-choice button svg {
+  color: hsl(var(--primary));
+}
+
+.virtual-choice button small {
+  color: hsl(var(--muted-foreground));
+  font-weight: 700;
+}
+
+.virtual-choice button.active,
+.ddd-grid button.active {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary) / .16);
+  box-shadow: inset 0 0 0 1px hsl(var(--primary) / .18);
+}
+
+.ddd-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid hsl(var(--border) / .7);
+  border-radius: 16px;
+  margin-bottom: 14px;
+}
+
+.ddd-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ddd-grid button {
+  height: 36px;
+  font-weight: 900;
+}
+
+.virtual-buy {
+  width: 100%;
+  justify-content: center;
+}
+
+.virtual-active-card {
+  min-height: 360px;
+}
+
+.virtual-order {
+  display: grid;
+  gap: 14px;
+}
+
+.virtual-phone-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid hsl(var(--border) / .75);
+  border-radius: 16px;
+  background: hsl(var(--muted) / .18);
+}
+
+.virtual-phone-row span,
+.virtual-code span {
+  display: block;
+  color: hsl(var(--muted-foreground));
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.virtual-phone-row strong {
+  display: block;
+  margin: 5px 0;
+  font-size: 1.3rem;
+}
+
+.virtual-code {
+  min-height: 126px;
+  border: 1px solid hsl(var(--warning) / .35);
+  border-radius: 18px;
+  padding: 18px;
+  background: linear-gradient(145deg, hsl(var(--warning) / .12), hsl(var(--muted) / .16));
+  display: grid;
+  align-content: center;
+  gap: 8px;
+}
+
+.virtual-code.ready {
+  border-color: hsl(var(--success) / .55);
+  background: linear-gradient(145deg, hsl(var(--success) / .18), hsl(var(--muted) / .14));
+}
+
+.virtual-code strong {
+  color: hsl(var(--foreground));
+  font-size: clamp(1.6rem, 5vw, 3rem);
+  letter-spacing: .08em;
+}
+
+.virtual-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.virtual-empty {
+  min-height: 230px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  text-align: center;
+  gap: 8px;
+  color: hsl(var(--muted-foreground));
+  border: 1px dashed hsl(var(--border));
+  border-radius: 16px;
+}
+
+.virtual-empty strong {
+  color: hsl(var(--foreground));
+}
+
+.virtual-empty.compact {
+  min-height: 90px;
+}
+
+.virtual-history {
+  display: grid;
+  gap: 9px;
+}
+
+.virtual-history-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, .75fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid hsl(var(--border) / .62);
+  border-radius: 14px;
+  background: hsl(var(--muted) / .14);
+}
+
+.virtual-history-row strong,
+.virtual-history-row b,
+.virtual-history-row span,
+.virtual-history-row small {
+  display: block;
+}
+
+.spin {
+  animation: spin .85s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 980px) {
+  .virtual-page {
+    width: min(100% - 24px, 720px);
+  }
+
+  .virtual-hero,
+  .virtual-grid,
+  .virtual-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .virtual-hero {
+    display: grid;
+  }
+
+  .virtual-history-row {
+    grid-template-columns: 1fr;
+  }
+
+  .ddd-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

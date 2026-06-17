@@ -38,6 +38,7 @@ export const menuSections = [
       { label: "Usuarios", path: "/admin/users", icon: Users },
       { label: "Configuracoes BM", path: "/admin/bm-settings", icon: Building2 },
       { label: "Registrar Remetente", path: "/admin/sender-registration", icon: Smartphone },
+      { label: "Numeros Virtuais", path: "/admin/virtual-numbers", icon: Smartphone },
       { label: "Remetentes", path: "/admin/registered-senders", icon: Users },
       { label: "Gerenciar APIs", path: "/admin/handle-manager", icon: UserCog },
       { label: "Analytics", path: "/transmission-analytics", icon: BarChart3 },

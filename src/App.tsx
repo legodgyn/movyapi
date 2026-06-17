@@ -22,6 +22,7 @@ import { Security } from "./pages/Security";
 import { SenderRegistration } from "./pages/SenderRegistration";
 import { SenderWabas } from "./pages/SenderWabas";
 import { TemplateCreator } from "./pages/TemplateCreator";
+import { VirtualNumbers } from "./pages/VirtualNumbers";
 
 function Protected() {
   const { pathname } = useLocation();
@@ -62,6 +63,7 @@ export function App() {
         <Route path="/admin/v1/sender-wabas" element={<SenderWabas />} />
         <Route path="/admin/sender-registration" element={<SenderRegistration />} />
         <Route path="/admin/registered-senders" element={<RegisteredSenders />} />
+        <Route path="/admin/virtual-numbers" element={<VirtualNumbers />} />
         <Route path="/transmissoes" element={<Broadcast mode="simple" />} />
         <Route path="/admin/v1/users" element={<AdminUsersV1 />} />
         <Route path="/admin/v1/security" element={<Security />} />

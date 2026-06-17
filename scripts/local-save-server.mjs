@@ -27,11 +27,13 @@ const port = Number(process.env.SCALEAPI_SAVE_PORT ?? 5174);
 const host = process.env.SCALEAPI_SAVE_HOST || "127.0.0.1";
 const downloadsDir = join(homedir(), "Downloads");
 const checkNumberApiKey = process.env.CHECKNUMBER_API_KEY || "";
+const sms24hApiKey = process.env.SMS24H_API_KEY || "";
 const metaWebhookVerifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN || "";
 const databasePath = process.env.MOVY_DB_PATH || join(process.cwd(), "data", "movyapi.sqlite");
 const storageFilePath = process.env.MOVY_STORAGE_FILE || join(process.cwd(), "data", "storage.json");
 const uploadsDir = process.env.MOVY_UPLOADS_DIR || join(process.cwd(), "data", "uploads");
 const checkNumberBaseUrl = "https://api.checknumber.ai/v1";
+const sms24hBaseUrl = process.env.SMS24H_API_BASE_URL || "https://api.sms24h.org/stubs/handler_api";
 const whatsappStatuses = new Map();
 const graphApiBase = "https://graph.facebook.com/v24.0";
 let lastBroadcastDebug = null;
@@ -51,6 +53,142 @@ function setCors(response, contentType = "application/json; charset=utf-8") {
   response.setHeader("Access-Control-Allow-Headers", "content-type,x-api-key");
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   response.setHeader("Content-Type", contentType);
+}
+
+const sms24hErrorMessages = {
+  BAD_KEY: "Chave SMS24h invalida ou sem permissao.",
+  BAD_ACTION: "Acao SMS24h invalida.",
+  BAD_SERVICE: "Servico nao suportado pela SMS24h.",
+  FORBIDEN_SERVICE: "Servico indisponivel para essa conta na SMS24h.",
+  NO_NUMBERS: "Sem numeros WhatsApp Brasil disponiveis agora.",
+  NO_BALANCE: "Saldo insuficiente na SMS24h.",
+  NO_ACTIVATION: "Ativacao nao encontrada na SMS24h.",
+  STATUS_CANCEL: "Ativacao cancelada.",
+  STATUS_WAIT_CODE: "Aguardando SMS com o codigo.",
+  STATUS_WAIT_RETRY: "Aguardando novo SMS.",
+};
+
+function sms24hUrl(params) {
+  const url = new URL(sms24hBaseUrl);
+  url.searchParams.set("api_key", sms24hApiKey);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
+  }
+  return url;
+}
+
+function parseSms24hText(raw) {
+  const text = String(raw || "").trim();
+  if (text.startsWith("ACCESS_BALANCE:")) {
+    return { ok: true, status: "balance", balance: Number(text.split(":")[1] || 0), raw: text };
+  }
+  if (text.startsWith("ACCESS_NUMBER:")) {
+    const [, id, number] = text.split(":");
+    return { ok: true, status: "number", id, number, raw: text };
+  }
+  if (text.startsWith("STATUS_OK:")) {
+    return { ok: true, status: "code", code: text.slice("STATUS_OK:".length).trim(), raw: text };
+  }
+  if (sms24hErrorMessages[text]) {
+    return { ok: !text.startsWith("BAD_") && !text.startsWith("NO_"), status: text, message: sms24hErrorMessages[text], raw: text };
+  }
+  return { ok: true, status: "raw", raw: text };
+}
+
+async function callSms24h(params) {
+  if (!sms24hApiKey) {
+    const error = new Error("SMS24H_API_KEY nao configurada no servidor");
+    error.statusCode = 500;
+    throw error;
+  }
+  const upstream = await fetch(sms24hUrl(params), {
+    headers: {
+      Accept: "text/plain, application/json, */*",
+      "User-Agent": "Mozilla/5.0 MovyApi/1.0",
+    },
+  });
+  const raw = await upstream.text();
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = parseSms24hText(raw);
+  }
+  return { upstreamStatus: upstream.status, raw, parsed };
+}
+
+async function handleSms24h(request, response) {
+  try {
+    const url = new URL(request.url || "", `http://${request.headers.host}`);
+    if (request.method === "GET" && url.pathname === "/sms24h/balance") {
+      const result = await callSms24h({ action: "getBalance" });
+      sendJson(response, result.upstreamStatus, { ok: result.upstreamStatus < 400, ...result.parsed });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/sms24h/stock") {
+      const statusResult = await callSms24h({ action: "getNumbersStatus", country: "73", operator: "any" });
+      const priceResult = await callSms24h({ action: "getPrices", country: "73", service: "wa" });
+      const stock = typeof statusResult.parsed === "object" && !Array.isArray(statusResult.parsed) ? statusResult.parsed : {};
+      const prices = typeof priceResult.parsed === "object" && !Array.isArray(priceResult.parsed) ? priceResult.parsed : {};
+      sendJson(response, 200, {
+        ok: true,
+        service: "wa",
+        country: "73",
+        available: Number(stock.wa_0 || 0),
+        price: Number(prices?.["73"]?.wa?.cost || 0),
+        count: Number(prices?.["73"]?.wa?.count || 0),
+        stock,
+        prices,
+      });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/sms24h/orders") {
+      const body = JSON.parse((await readRequestBody(request)).toString("utf8") || "{}");
+      const ddd = String(body.ddd || "").replace(/\D/g, "").slice(0, 2);
+      const result = await callSms24h({
+        action: "getNumber",
+        operator: "any",
+        service: "wa",
+        country: "73",
+        ddd,
+      });
+      const status = result.parsed?.ok === false ? 400 : result.upstreamStatus;
+      sendJson(response, status, {
+        ok: result.upstreamStatus < 400 && result.parsed?.ok !== false,
+        service: "wa",
+        country: "73",
+        ddd: ddd || null,
+        ...result.parsed,
+      });
+      return;
+    }
+
+    const orderMatch = url.pathname.match(/^\/sms24h\/orders\/([^/]+)$/);
+    if (request.method === "GET" && orderMatch) {
+      const result = await callSms24h({ action: "getStatus", id: orderMatch[1] });
+      sendJson(response, result.upstreamStatus, { ok: result.upstreamStatus < 400, id: orderMatch[1], ...result.parsed });
+      return;
+    }
+
+    const statusMatch = url.pathname.match(/^\/sms24h\/orders\/([^/]+)\/status$/);
+    if (request.method === "POST" && statusMatch) {
+      const body = JSON.parse((await readRequestBody(request)).toString("utf8") || "{}");
+      const status = String(body.status || "");
+      if (!/^[368]$/.test(status)) {
+        sendJson(response, 400, { ok: false, error: "invalid-status", message: "Use 3 para novo SMS, 6 para finalizar ou 8 para cancelar." });
+        return;
+      }
+      const result = await callSms24h({ action: "setStatus", status, id: statusMatch[1] });
+      sendJson(response, result.upstreamStatus, { ok: result.upstreamStatus < 400, id: statusMatch[1], ...result.parsed });
+      return;
+    }
+
+    sendJson(response, 404, { ok: false, error: "sms24h-route-not-found" });
+  } catch (error) {
+    sendJson(response, error?.statusCode || 500, { ok: false, error: error instanceof Error ? error.message : "sms24h-proxy-failed" });
+  }
 }
 
 function normalizeWhatsAppStatus(status) {
@@ -692,6 +830,11 @@ createServer(async (request, response) => {
 
   if (request.method === "GET" && request.url?.startsWith("/broadcast/debug-last")) {
     sendJson(response, 200, { ok: true, debug: lastBroadcastDebug });
+    return;
+  }
+
+  if (request.url?.startsWith("/sms24h/")) {
+    await handleSms24h(request, response);
     return;
   }
 

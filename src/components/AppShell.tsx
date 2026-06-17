@@ -70,6 +70,10 @@ const titles: Record<string, { title: string; description: string }> = {
     title: "Configuracoes BM",
     description: "Conecte Business Manager, WABA e Cloud API",
   },
+  "/admin/virtual-numbers": {
+    title: "Numeros Virtuais",
+    description: "Compre numeros WhatsApp Brasil e acompanhe codigos",
+  },
   "/campaigns": {
     title: "Campanhas",
     description: "Gestao de campanhas V1",
