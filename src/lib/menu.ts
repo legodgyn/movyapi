@@ -17,7 +17,7 @@ export const menuSections = [
   {
     title: "Principal",
     items: [
-      { label: "Templates", path: "/", icon: LayoutTemplate },
+      { label: "Templates INFOBIP", path: "/", icon: LayoutTemplate },
       { label: "Meta Templates", path: "/meta-templates", icon: MessageSquareText },
       { label: "Midias", path: "/media", icon: Image },
     ],

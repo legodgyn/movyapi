@@ -432,7 +432,7 @@ export function TemplateCreator() {
           <Zap size={22} />
         </div>
         <div>
-          <h1>Templates Infobip</h1>
+          <h1>Templates INFOBIP</h1>
           <p>Crie, salve e envie modelos pelo canal configurado em Gerenciar APIs.</p>
         </div>
       </header>
@@ -450,8 +450,8 @@ export function TemplateCreator() {
       </nav>
 
       {tab === "create" ? (
-        <div className="template-layout">
-          <section className="card template-config">
+        <div className="template-layout infobip-create-layout">
+          <section className="card template-config infobip-template-config">
             <h2><span className="card-title-icon"><Sparkles size={17} /></span> Informações básicas</h2>
             <div className="grid cols-2">
               <div className="field">
@@ -593,7 +593,7 @@ export function TemplateCreator() {
             {status ? <p className="hint">{status}</p> : null}
           </section>
 
-          <aside className="card template-preview-card">
+          <aside className="card template-preview-card infobip-template-preview-card">
             <h2><span className="card-title-icon"><Eye size={17} /></span> Preview WhatsApp</h2>
             <div className="whatsapp-preview">
               <div className="preview-label">Pré-visualização</div>
