@@ -967,14 +967,18 @@ export function MetaTemplates() {
   const sentLocal = sentTemplates.filter((template) => template.source === "local").length;
 
   return (
-    <main className="page template-page">
+    <main className="page template-page meta-template-page">
       <header className="template-heading">
         <div className="page-heading-icon">
           <Zap size={24} />
         </div>
         <div>
-          <h1>Meta Templates</h1>
-          <p>Crie templates diretamente na API da Meta/Facebook</p>
+          <h1>{activeTemplateTab === "create" ? "Criar Templates" : "Templates enviados"}</h1>
+          <p>
+            {activeTemplateTab === "create"
+              ? "Gere modelos aprovados para WhatsApp pela Meta"
+              : "Acompanhe status, BMs e conteudo aprovado"}
+          </p>
         </div>
       </header>
 
@@ -991,9 +995,9 @@ export function MetaTemplates() {
       </div>
 
       {activeTemplateTab === "create" ? (
-      <div className="template-layout">
-        <section className="card template-config">
-          <h2><span className="card-title-icon"><Zap size={17} /></span> Configurar Template (Meta API)</h2>
+      <div className="template-layout meta-create-layout">
+        <section className="card template-config meta-template-config">
+          <h2><span className="card-title-icon"><Zap size={17} /></span> Configurar Template</h2>
 
           <div className="meta-top-fields">
             <div className="field">
@@ -1188,7 +1192,7 @@ export function MetaTemplates() {
           {status && <p className="hint">{status}</p>}
         </section>
 
-        <aside className="card template-preview-card">
+        <aside className="card template-preview-card meta-template-preview-card">
           <h2><span className="card-title-icon"><Eye size={17} /></span> Preview WhatsApp</h2>
           <div className="whatsapp-preview">
             <div className="preview-label">{"Pr\u00e9-visualiza\u00e7\u00e3o"}</div>
