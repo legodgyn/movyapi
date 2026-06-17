@@ -8159,3 +8159,281 @@ a {
     padding-inline: 14px;
   }
 }
+
+/* Movy clean system pass */
+.content > .page,
+.content > .template-page,
+.content > .users-page {
+  margin-inline: auto;
+  max-width: 1220px;
+  width: 100%;
+}
+
+.content > .broadcast-page,
+.content > .analytics-page {
+  max-width: 1380px;
+}
+
+.content > .dc-flow-page {
+  margin: 0;
+  max-width: none;
+  width: 100%;
+}
+
+.template-page,
+.page:not(.dc-flow-page) {
+  padding: 24px clamp(18px, 2.2vw, 32px) 40px;
+}
+
+.template-heading,
+.page-heading,
+.users-page .template-heading {
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.template-heading h1,
+.page-heading h1,
+.content h1 {
+  font-size: clamp(19px, 1.35vw, 23px);
+  letter-spacing: 0;
+  line-height: 1.15;
+}
+
+.template-heading p,
+.page-heading p,
+.topbar p,
+.section-note,
+.muted,
+.card p,
+.panel p {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.topbar h2 {
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.card,
+.panel,
+.settings-card,
+.template-card,
+.users-panel,
+.bm-panel,
+.media-card,
+.analytics-card,
+.broadcast-panel,
+.broadcast-step-card,
+.broadcast-wizard,
+.list-cleaner-card {
+  border-radius: 8px;
+}
+
+.card,
+.panel,
+.settings-card,
+.users-panel,
+.bm-panel,
+.media-card,
+.analytics-card,
+.list-cleaner-card {
+  padding: clamp(14px, 1.5vw, 20px);
+}
+
+.card h2,
+.panel h2,
+.settings-card h2,
+.users-panel h2,
+.bm-panel h2,
+.media-card h2,
+.analytics-card h2,
+.list-cleaner-card h2,
+.content h2 {
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.card h3,
+.panel h3,
+.settings-card h3,
+.users-panel h3,
+.bm-panel h3,
+.media-card h3,
+.analytics-card h3,
+.list-cleaner-card h3,
+.content h3 {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.field label,
+.form-label,
+.input-label,
+.permission-group-title,
+.metric-label,
+.stat-label,
+th {
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.input,
+.select,
+.textarea,
+input,
+select,
+textarea {
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.button,
+button,
+.menu-link,
+.sidebar-logout {
+  letter-spacing: 0;
+}
+
+.button,
+.btn,
+.sidebar-logout {
+  border-radius: 8px;
+  font-size: 12px;
+  min-height: 34px;
+}
+
+.topbar {
+  min-height: 58px;
+}
+
+.topbar-icon,
+.brand-mark,
+.page-heading-icon,
+.template-heading-icon {
+  border-radius: 10px;
+}
+
+.menu-link {
+  min-height: 34px;
+}
+
+.menu-link span,
+.sidebar-logout span {
+  font-size: 12px;
+}
+
+.menu-title {
+  font-size: 10px;
+  letter-spacing: .08em;
+}
+
+.stat-value,
+.metric-value,
+.analytics-metric strong {
+  font-size: clamp(22px, 2vw, 30px);
+  line-height: 1;
+}
+
+.table-wrap,
+.data-table,
+.contacts-table,
+.analytics-table,
+.users-table {
+  border-radius: 8px;
+}
+
+table th,
+table td,
+.contacts-table th,
+.contacts-table td,
+.analytics-table th,
+.analytics-table td {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.broadcast-phone-preview,
+.whatsapp-preview,
+.custom-preview-card {
+  max-width: 390px;
+}
+
+.broadcast-phone-frame,
+.meta-template-page .preview-phone,
+.infobip-template-page .preview-phone {
+  margin-inline: auto;
+}
+
+.broadcast-whatsapp-bubble,
+.meta-template-page .preview-message,
+.infobip-template-page .preview-message,
+.custom-preview-card p {
+  font-size: 13px;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.broadcast-whatsapp-bubble p,
+.meta-template-page .preview-message p,
+.infobip-template-page .preview-message p {
+  margin: 0 0 10px;
+}
+
+.broadcast-whatsapp-bubble p:last-child,
+.meta-template-page .preview-message p:last-child,
+.infobip-template-page .preview-message p:last-child {
+  margin-bottom: 0;
+}
+
+.dc-whatsapp-card,
+.custom-preview-card,
+.whatsapp-preview {
+  border-radius: 12px;
+}
+
+.dc-whatsapp-body,
+.dc-whatsapp-message,
+.custom-preview-card p {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.list-cleaner-page .template-layout,
+.media-page .media-layout,
+.bm-settings-page .settings-grid,
+.sender-registration-page .sender-registration-grid,
+.registered-senders-page .registered-senders-grid {
+  gap: 16px;
+}
+
+@media (min-width: 1440px) {
+  .content > .page,
+  .content > .template-page,
+  .content > .users-page {
+    max-width: 1280px;
+  }
+
+  .content > .broadcast-page,
+  .content > .analytics-page {
+    max-width: 1460px;
+  }
+}
+
+@media (max-width: 900px) {
+  .template-page,
+  .page:not(.dc-flow-page) {
+    padding-inline: 14px;
+  }
+
+  .content > .page,
+  .content > .template-page,
+  .content > .users-page {
+    max-width: none;
+  }
+}

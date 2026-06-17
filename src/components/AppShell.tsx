@@ -24,12 +24,12 @@ function readLocalJson(key: string) {
 
 const titles: Record<string, { title: string; description: string }> = {
   "/": {
-    title: "Criar Templates",
-    description: "Gere templates em massa para WhatsApp",
+    title: "Templates INFOBIP",
+    description: "Crie modelos pelo canal Infobip",
   },
   "/meta-templates": {
-    title: "Meta Templates",
-    description: "API Direta Facebook/WhatsApp",
+    title: "Templates META",
+    description: "API direta Facebook/WhatsApp",
   },
   "/list-cleaner": {
     title: "Tratar Lista",
@@ -48,15 +48,15 @@ const titles: Record<string, { title: string; description: string }> = {
   },
   "/flows": {
     title: "Fluxos",
-    description: "Automacoes de mensagens",
+    description: "Automações de mensagens",
   },
   "/media": {
     title: "Gerenciador de Mídias",
-    description: "Upload e compressão de vídeos, imagens e áudios",
+    description: "Upload e organização de vídeos, imagens e áudios",
   },
   "/transmission-analytics": {
-    title: "Analytics de Transmissoes",
-    description: "Metricas de envio via Cloud API",
+    title: "Analytics de Transmissões",
+    description: "Métricas de envio via Cloud API",
   },
   "/admin/users": {
     title: "Gerenciar Usuários",
@@ -68,7 +68,7 @@ const titles: Record<string, { title: string; description: string }> = {
   },
   "/campaigns": {
     title: "Campanhas",
-    description: "Gestao de campanhas V1",
+    description: "Gestão de campanhas V1",
   },
 };
 
@@ -78,7 +78,7 @@ export function AppShell() {
   const user = getCurrentUser();
   const current = titles[pathname] ?? {
     title: "Movy Api",
-    description: "Automacao inteligente para WhatsApp",
+    description: "Automação inteligente para WhatsApp",
   };
   const visibleSections = user
     ? menuSections
