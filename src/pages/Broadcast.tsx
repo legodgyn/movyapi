@@ -850,10 +850,9 @@ function insertTextAtSelection(value: string, insert: string, start?: number | n
 
 function normalizeTemplateParameterText(value: string) {
   return String(value || "")
-    .replace(/\v/g, "\n")
-    .replace(/\r\n?/g, "\n")
+    .replace(/[\v\r\n]+/g, " ")
     .replace(/\t+/g, " ")
-    .replace(/ {5,}/g, "    ")
+    .replace(/ {2,}/g, " ")
     .trim();
 }
 
