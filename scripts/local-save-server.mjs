@@ -108,6 +108,13 @@ async function callSms24h(params) {
     },
   });
   const raw = await upstream.text();
+  if (!upstream.ok) {
+    const error = new Error(
+      raw?.trim() || `SMS24h retornou HTTP ${upstream.status}. Tente novamente ou confirme se a API aceita chamadas da VPS.`
+    );
+    error.statusCode = upstream.status;
+    throw error;
+  }
   let parsed;
   try {
     parsed = JSON.parse(raw);
