@@ -8909,6 +8909,60 @@ table td,
   padding: 22px;
 }
 
+.virtual-page .btn,
+.virtual-page .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid hsl(var(--border) / .75);
+  border-radius: 9px;
+  min-height: 36px;
+  padding: 0 13px;
+  background: hsl(var(--muted) / .2);
+  color: hsl(var(--foreground));
+  font-weight: 900;
+  font-size: .78rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease, color .18s ease, transform .18s ease;
+}
+
+.virtual-page .btn:hover,
+.virtual-page .icon-button:hover {
+  border-color: hsl(var(--primary) / .55);
+  background: hsl(var(--primary) / .12);
+}
+
+.virtual-page .btn.primary {
+  border-color: hsl(var(--primary));
+  background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary) / .82));
+  color: hsl(var(--primary-foreground));
+  box-shadow: 0 12px 28px hsl(var(--primary) / .18);
+}
+
+.virtual-page .btn.primary:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(135deg, hsl(var(--primary) / .95), hsl(var(--primary) / .72));
+}
+
+.virtual-page .btn.secondary,
+.virtual-page .btn.ghost {
+  background: hsl(var(--card) / .72);
+}
+
+.virtual-page .btn:disabled,
+.virtual-page .icon-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+  transform: none;
+}
+
+.virtual-page .icon-button {
+  width: 36px;
+  padding: 0;
+}
+
 .virtual-buy-layout {
   display: grid;
   grid-template-columns: minmax(0, .9fr) minmax(360px, 460px);
@@ -8927,6 +8981,27 @@ table td,
   margin: 0;
   color: hsl(var(--muted-foreground));
   font-size: .92rem;
+}
+
+.virtual-alert {
+  max-width: 640px;
+  display: grid;
+  gap: 5px;
+  margin-top: 18px;
+  border: 1px solid hsl(var(--warning) / .34);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: hsl(var(--warning) / .1);
+  color: hsl(var(--foreground));
+}
+
+.virtual-alert strong {
+  font-size: .86rem;
+}
+
+.virtual-alert span {
+  color: hsl(var(--muted-foreground));
+  font-size: .82rem;
 }
 
 .virtual-title-block.compact {

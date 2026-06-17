@@ -108,6 +108,7 @@ export function VirtualNumbers() {
   const [balance, setBalance] = useState<Sms24hBalance | null>(null);
   const [stock, setStock] = useState<Sms24hStock | null>(null);
   const [orders, setOrders] = useState<Sms24hOrder[]>([]);
+  const [apiError, setApiError] = useState("");
   const [loading, setLoading] = useState(false);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
 
@@ -140,8 +141,11 @@ export function VirtualNumbers() {
       ]);
       setBalance(nextBalance);
       setStock(nextStock);
+      setApiError("");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao carregar SMS24h");
+      const message = error instanceof Error ? error.message : "Falha ao carregar SMS24h";
+      setApiError(message);
+      toast.error(message);
     }
   }
 
@@ -282,6 +286,12 @@ export function VirtualNumbers() {
               <span className="eyebrow">WhatsApp Brasil</span>
               <h1>Comprar número virtual</h1>
               <p>Informe o DDD desejado ou deixe em branco para comprar qualquer número disponível do Brasil.</p>
+              {apiError && (
+                <div className="virtual-alert">
+                  <strong>SMS24h não respondeu pela VPS</strong>
+                  <span>{apiError}</span>
+                </div>
+              )}
             </div>
 
             <div className="virtual-shop-card">
