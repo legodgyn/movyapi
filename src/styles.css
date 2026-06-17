@@ -9647,28 +9647,28 @@ table td,
 }
 
 .broadcast-wizard-page .broadcast-stepper {
-  gap: 6px;
-  grid-template-columns: repeat(5, minmax(116px, 148px));
-  max-width: 760px;
+  gap: 8px;
+  grid-template-columns: repeat(5, minmax(132px, 162px));
+  max-width: 850px;
   width: auto;
 }
 
 .broadcast-wizard-page .wizard-step {
-  min-height: 44px;
-  padding: 7px 9px;
+  min-height: 52px;
+  padding: 9px 11px;
 }
 
 .broadcast-wizard-page .wizard-step span {
-  height: 17px;
-  width: 17px;
+  height: 19px;
+  width: 19px;
 }
 
 .broadcast-wizard-page .wizard-step strong {
-  font-size: 10.5px;
+  font-size: 11px;
 }
 
 .broadcast-wizard-page .wizard-step small {
-  font-size: 8.5px;
+  font-size: 9px;
 }
 
 .broadcast-wizard-page .broadcast-wizard-main {
