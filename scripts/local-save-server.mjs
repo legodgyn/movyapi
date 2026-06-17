@@ -553,13 +553,12 @@ function variableValue(variables, key) {
 }
 
 function normalizeTemplateParameterText(value) {
-  const normalized = String(value || "")
+  return String(value || "")
     .replace(/\v/g, "\n")
     .replace(/\r\n?/g, "\n")
     .replace(/\t+/g, " ")
     .replace(/ {5,}/g, "    ")
     .trim();
-  return normalized.replace(/\n/g, "\v");
 }
 
 function buildCloudMessagePayload(recipient, lot) {
