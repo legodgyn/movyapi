@@ -1228,11 +1228,11 @@ export function Broadcast() {
     () => senders.find((sender) => sender.id === plan.senderId),
     [plan.senderId, senders],
   );
-  const selectedSenders = useMemo(
-    () => senders.filter((sender) => plan.senderIds.includes(sender.id)),
-    [plan.senderIds, senders],
-  );
   const isRandomMode = plan.mode === "random";
+  const selectedSenders = useMemo(() => {
+    const ids = plan.senderIds.length ? plan.senderIds : isRandomMode && plan.senderId ? [plan.senderId] : [];
+    return senders.filter((sender) => ids.includes(sender.id));
+  }, [isRandomMode, plan.senderId, plan.senderIds, senders]);
   const senderPool = isRandomMode ? selectedSenders : selectedSender ? [selectedSender] : [];
   const templatesForSender = useCallback(
     (sender?: InfobipApi) => {
@@ -1488,7 +1488,7 @@ export function Broadcast() {
     updatePlan((currentPlan) => ({
       ...currentPlan,
       mode,
-      senderIds: mode === "random" ? currentPlan.senderIds.length ? currentPlan.senderIds : currentPlan.senderId ? [currentPlan.senderId] : [] : currentPlan.senderIds,
+      senderIds: mode === "random" ? currentPlan.senderIds.length ? currentPlan.senderIds : currentPlan.senderId ? [currentPlan.senderId] : [] : [],
       senderId: mode === "simple" ? currentPlan.senderId || currentPlan.senderIds[0] || "" : currentPlan.senderId,
     }));
     setStatus(mode === "random" ? "Modo randomico: a fila alterna remetentes e templates contato a contato." : "Modo simples: um remetente assina todo o lote.");
