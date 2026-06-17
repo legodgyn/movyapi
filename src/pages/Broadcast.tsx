@@ -3319,21 +3319,6 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                   </div>
                 </div>
 
-                <div className="run-progress">
-                  <div>
-                    <strong>{percent(run)}%</strong>
-                    <span>{run.status === "idle" ? "Aguardando inicio" : runStatusText}</span>
-                  </div>
-                  <div className="progress-track">
-                    <span style={{ width: `${percent(run)}%` }} />
-                  </div>
-                  <div className="progress-segments">
-                    <span className="success" style={{ width: `${run.total ? (run.delivered / run.total) * 100 : 0}%` }} />
-                    <span className="danger" style={{ width: `${run.total ? (run.failed / run.total) * 100 : 0}%` }} />
-                    <span className="warning" style={{ width: `${run.total ? (run.processing / run.total) * 100 : 0}%` }} />
-                  </div>
-                </div>
-
                 {awaitingStatuses ? (
                   <div className="broadcast-status-note">
                     <Clock3 size={17} />
@@ -3372,6 +3357,21 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                     <Users size={18} />
                     <strong>{run.total.toLocaleString("pt-BR")}</strong>
                     <span>Total</span>
+                  </div>
+                </div>
+
+                <div className="run-progress">
+                  <div>
+                    <strong>{percent(run)}%</strong>
+                    <span>{run.status === "idle" ? "Aguardando inicio" : runStatusText}</span>
+                  </div>
+                  <div className="progress-track">
+                    <span style={{ width: `${percent(run)}%` }} />
+                  </div>
+                  <div className="progress-segments">
+                    <span className="success" style={{ width: `${run.total ? (run.delivered / run.total) * 100 : 0}%` }} />
+                    <span className="danger" style={{ width: `${run.total ? (run.failed / run.total) * 100 : 0}%` }} />
+                    <span className="warning" style={{ width: `${run.total ? (run.processing / run.total) * 100 : 0}%` }} />
                   </div>
                 </div>
 
