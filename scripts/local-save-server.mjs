@@ -238,7 +238,7 @@ async function callSisbratel(path, options = {}) {
 }
 
 function normalizeSisbratelActivation(item) {
-  const source = item || {};
+  const source = item?.activation || item?.order || item?.data || item?.item || item || {};
   const id = source.activationId || source.id || source.activation_id || "";
   return {
     id: String(id),
@@ -255,6 +255,10 @@ function normalizeSisbratelActivation(item) {
     expiresAt: source.expiresAt || source.expires_at || "",
     raw: source,
   };
+}
+
+function extractSisbratelActivation(payload) {
+  return payload?.activation || payload?.order || payload?.data || payload?.item || payload;
 }
 
 function normalizeSisbratelList(payload) {
@@ -317,7 +321,7 @@ async function handleSisbratel(request, response) {
         ...(ddd ? { ddd } : {}),
       };
       const result = await callSisbratel("/buy", { method: "POST", body: payload });
-      sendJson(response, 200, { ok: true, order: normalizeSisbratelActivation(result.parsed), raw: result.parsed });
+      sendJson(response, 200, { ok: true, order: normalizeSisbratelActivation(extractSisbratelActivation(result.parsed)), raw: result.parsed });
       return;
     }
 
@@ -325,7 +329,11 @@ async function handleSisbratel(request, response) {
     if (request.method === "GET" && orderMatch) {
       const id = decodeURIComponent(orderMatch[1]);
       const result = await callSisbratel(`/status/${encodeURIComponent(id)}`);
-      sendJson(response, 200, { ok: true, order: normalizeSisbratelActivation({ activationId: id, ...result.parsed }), raw: result.parsed });
+      sendJson(response, 200, {
+        ok: true,
+        order: normalizeSisbratelActivation({ activationId: id, ...extractSisbratelActivation(result.parsed) }),
+        raw: result.parsed,
+      });
       return;
     }
 
@@ -337,7 +345,11 @@ async function handleSisbratel(request, response) {
         method: "POST",
         body: { activationId: id, id },
       });
-      sendJson(response, 200, { ok: true, order: normalizeSisbratelActivation({ activationId: id, ...result.parsed }), raw: result.parsed });
+      sendJson(response, 200, {
+        ok: true,
+        order: normalizeSisbratelActivation({ activationId: id, ...extractSisbratelActivation(result.parsed) }),
+        raw: result.parsed,
+      });
       return;
     }
 

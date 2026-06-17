@@ -87,7 +87,12 @@ function statusLabel(status: string) {
   const normalized = String(status || "").toUpperCase();
   const map: Record<string, string> = {
     ACTIVE: "Aguardando codigo",
+    CREATED: "Aguardando codigo",
+    PENDING: "Aguardando codigo",
+    PROCESSING: "Aguardando codigo",
+    SMS_WAITING: "Aguardando codigo",
     WAITING: "Aguardando codigo",
+    WAITING_CODE: "Aguardando codigo",
     WAIT_CODE: "Aguardando codigo",
     STATUS_WAIT_CODE: "Aguardando codigo",
     CODE_RECEIVED: "Codigo recebido",
@@ -104,6 +109,34 @@ function statusLabel(status: string) {
 function isActiveOrder(order: SisbratelOrder) {
   const status = String(order.status || "").toUpperCase();
   return !["CANCELLED", "CANCELED", "COMPLETED", "FINISHED", "EXPIRED"].includes(status);
+}
+
+function getOrderKey(order: Partial<SisbratelOrder>) {
+  return String(order.activationId || order.id || order.number || "");
+}
+
+function isExpiredOrder(order: SisbratelOrder) {
+  if (!order.expiresAt) return false;
+  const time = new Date(order.expiresAt).getTime();
+  return Number.isFinite(time) && time < Date.now();
+}
+
+function mergeOrders(remote: SisbratelOrder[], current: SisbratelOrder[]) {
+  const map = new Map<string, SisbratelOrder>();
+  for (const order of current) {
+    const key = getOrderKey(order);
+    if (key && isActiveOrder(order) && !isExpiredOrder(order)) map.set(key, order);
+  }
+  for (const order of remote) {
+    const key = getOrderKey(order);
+    if (!key) continue;
+    map.set(key, { ...(map.get(key) || {}), ...order });
+  }
+  return Array.from(map.values()).sort((a, b) => {
+    const aTime = new Date(a.createdAt || 0).getTime();
+    const bTime = new Date(b.createdAt || 0).getTime();
+    return bTime - aTime;
+  });
 }
 
 function normalizeOrder(order: Partial<SisbratelOrder> | null | undefined): SisbratelOrder | null {
@@ -161,7 +194,8 @@ export function SisbratelNumbers() {
       ]);
       setBalance(nextBalance);
       setServicePrice(Number(services.whatsapp?.price || 0) || undefined);
-      setActivations((activeList.activations || []).map(normalizeOrder).filter(Boolean) as SisbratelOrder[]);
+      const remoteActivations = (activeList.activations || []).map(normalizeOrder).filter(Boolean) as SisbratelOrder[];
+      setActivations((current) => mergeOrders(remoteActivations, current));
       setHistory((historyList.history || []).map(normalizeOrder).filter(Boolean) as SisbratelOrder[]);
       setApiError("");
     } catch (error) {
@@ -184,10 +218,14 @@ export function SisbratelNumbers() {
         method: "POST",
       });
       const order = normalizeOrder(result.order);
-      if (!order) throw new Error("A SisBratel comprou, mas nao retornou os dados da ativacao.");
-      setActivations((current) => [order, ...current.filter((item) => item.id !== order.id)]);
       setActiveTab("activations");
-      toast.success("Numero comprado. Aguardando codigo.");
+      if (order) {
+        const key = getOrderKey(order);
+        setActivations((current) => [order, ...current.filter((item) => getOrderKey(item) !== key)]);
+        toast.success("Numero comprado. Aguardando codigo.");
+      } else {
+        toast.message("Compra enviada. Atualizando ativacoes da SisBratel.");
+      }
       void loadOverview();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao comprar numero");
@@ -202,9 +240,12 @@ export function SisbratelNumbers() {
       const result = await api<{ order?: SisbratelOrder }>(`/sisbratel/orders/${encodeURIComponent(id)}`);
       const nextOrder = normalizeOrder(result.order);
       if (nextOrder) {
-        setActivations((current) =>
-          current.map((order) => (order.id === id ? { ...order, ...nextOrder } : order)),
-        );
+        setActivations((current) => {
+          const key = getOrderKey(nextOrder);
+          const exists = current.some((order) => order.id === id || getOrderKey(order) === key);
+          if (!exists) return [nextOrder, ...current];
+          return current.map((order) => (order.id === id || getOrderKey(order) === key ? { ...order, ...nextOrder } : order));
+        });
         if (nextOrder.code) toast.success(`Codigo recebido: ${nextOrder.code}`);
         else if (showToast) toast.message(statusLabel(nextOrder.status));
       }
