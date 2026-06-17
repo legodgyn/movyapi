@@ -20,6 +20,7 @@
   Zap,
 } from "lucide-react";
 import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import { config } from "../lib/config";
 import { savedTemplates } from "../lib/services";
 
 type MetaMediaType = "IMAGE" | "VIDEO" | "NONE";
@@ -100,15 +101,16 @@ const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
 const LOCAL_META_MODELS_KEY = "scaleapi.metaTemplateModels";
 const LOCAL_META_SENT_TEMPLATES_KEY = "scaleapi.metaSentTemplatesCache";
 const GRAPH_API_BASE = "https://graph.facebook.com/v24.0";
+const DEFAULT_TEMPLATE_MEDIA_BASE = `${config.publicAppUrl.replace(/\/$/, "")}/local-api/media/files`;
 const DEFAULT_HEADER_IMAGE =
   import.meta.env.VITE_DEFAULT_TEMPLATE_IMAGE_URL ||
-  "https://wdlbajwwnmfdyoenpqzy.supabase.co/storage/v1/object/public/site-assets/img.jpeg";
+  `${DEFAULT_TEMPLATE_MEDIA_BASE}/movy-default-template-image.jpeg`;
 const DEFAULT_HEADER_VIDEO =
   import.meta.env.VITE_DEFAULT_TEMPLATE_VIDEO_URL ||
-  "https://wdlbajwwnmfdyoenpqzy.supabase.co/storage/v1/object/public/site-assets/WhatsApp%20Video%202026-04-28%20at%2022.35.50.mp4";
+  `${DEFAULT_TEMPLATE_MEDIA_BASE}/movy-default-template-video.mp4`;
 const DEFAULT_HEADER_VIDEO_POSTER =
   import.meta.env.VITE_DEFAULT_TEMPLATE_VIDEO_POSTER_URL ||
-  "https://wdlbajwwnmfdyoenpqzy.supabase.co/storage/v1/object/public/site-assets/img.jpeg";
+  `${DEFAULT_TEMPLATE_MEDIA_BASE}/movy-default-template-image.jpeg`;
 
 const DEFAULT_TEMPLATE_BODY = `Ol\u00e1 {{1}}!
 

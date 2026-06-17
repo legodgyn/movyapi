@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { type CSSProperties, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { config } from "../lib/config";
 import { labelOf } from "../lib/format";
 import { infobipApis, savedTemplates } from "../lib/services";
 import type { InfobipApi, SavedTemplate } from "../lib/types";
@@ -40,12 +41,13 @@ type IntegratedInfobipSender = {
 const LOCAL_INFOBIP_MODELS_KEY = "movy.infobipTemplateModels";
 const LOCAL_INFOBIP_SENT_KEY = "movy.infobipSentTemplates";
 const LOCAL_INFOBIP_SENDERS_KEY = "movy.infobipSenders";
+const DEFAULT_TEMPLATE_MEDIA_BASE = `${config.publicAppUrl.replace(/\/$/, "")}/local-api/media/files`;
 const DEFAULT_HEADER_IMAGE =
   import.meta.env.VITE_DEFAULT_TEMPLATE_IMAGE_URL ||
-  "https://wdlbajwwnmfdyoenpqzy.supabase.co/storage/v1/object/public/site-assets/img.jpeg";
+  `${DEFAULT_TEMPLATE_MEDIA_BASE}/movy-default-template-image.jpeg`;
 const DEFAULT_HEADER_VIDEO =
   import.meta.env.VITE_DEFAULT_TEMPLATE_VIDEO_URL ||
-  "https://wdlbajwwnmfdyoenpqzy.supabase.co/storage/v1/object/public/site-assets/WhatsApp%20Video%202026-04-28%20at%2022.35.50.mp4";
+  `${DEFAULT_TEMPLATE_MEDIA_BASE}/movy-default-template-video.mp4`;
 const DEFAULT_BODY = `Olá {{1}}!
 
 Temos uma novidade: {{2}}.
