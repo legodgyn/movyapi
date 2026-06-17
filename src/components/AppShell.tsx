@@ -39,8 +39,12 @@ const titles: Record<string, { title: string; description: string }> = {
     description: "Reprocesse contatos com falha",
   },
   "/broadcast": {
-    title: "Transmissões Cloud",
-    description: "Envie mensagens em massa via Cloud API",
+    title: "Broadcast Simples",
+    description: "Um remetente, templates e etiquetas vinculados em ordem",
+  },
+  "/broadcast-random": {
+    title: "Broadcast Randomico",
+    description: "Alterne remetentes e templates automaticamente contato a contato",
   },
   "/contatos": {
     title: "Contatos",
@@ -48,27 +52,27 @@ const titles: Record<string, { title: string; description: string }> = {
   },
   "/flows": {
     title: "Fluxos",
-    description: "Automações de mensagens",
+    description: "Automacoes de mensagens",
   },
   "/media": {
-    title: "Gerenciador de Mídias",
-    description: "Upload e organização de vídeos, imagens e áudios",
+    title: "Gerenciador de Midias",
+    description: "Upload e organizacao de videos, imagens e audios",
   },
   "/transmission-analytics": {
-    title: "Analytics de Transmissões",
-    description: "Métricas de envio via Cloud API",
+    title: "Analytics de Transmissoes",
+    description: "Metricas de envio via Cloud API",
   },
   "/admin/users": {
-    title: "Gerenciar Usuários",
-    description: "Administração do sistema",
+    title: "Gerenciar Usuarios",
+    description: "Administracao do sistema",
   },
   "/admin/bm-settings": {
-    title: "Configurações BM",
+    title: "Configuracoes BM",
     description: "Conecte Business Manager, WABA e Cloud API",
   },
   "/campaigns": {
     title: "Campanhas",
-    description: "Gestão de campanhas V1",
+    description: "Gestao de campanhas V1",
   },
 };
 
@@ -78,7 +82,7 @@ export function AppShell() {
   const user = getCurrentUser();
   const current = titles[pathname] ?? {
     title: "Movy Api",
-    description: "Automação inteligente para WhatsApp",
+    description: "Automacao inteligente para WhatsApp",
   };
   const visibleSections = user
     ? menuSections

@@ -27,7 +27,8 @@ export const menuSections = [
     items: [
       { label: "Tratar Lista", path: "/list-cleaner", icon: FileText },
       { label: "Retentativas", path: "/retries", icon: RefreshCcw },
-      { label: "Broadcast", path: "/broadcast", icon: Megaphone },
+      { label: "Broadcast Simples", path: "/broadcast", icon: Megaphone },
+      { label: "Broadcast Randomico", path: "/broadcast-random", icon: Megaphone },
       { label: "Flows", path: "/flows", icon: Workflow },
     ],
   },

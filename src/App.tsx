@@ -43,7 +43,8 @@ export function App() {
       <Route path="/auth" element={<AuthGate />} />
       <Route element={<Protected />}>
         <Route path="/" element={<TemplateCreator />} />
-        <Route path="/broadcast" element={<Broadcast />} />
+        <Route path="/broadcast" element={<Broadcast mode="simple" />} />
+        <Route path="/broadcast-random" element={<Broadcast mode="random" />} />
         <Route path="/contatos" element={<Contacts />} />
         <Route path="/flows" element={<Flows />} />
         <Route path="/media" element={<Media />} />
@@ -61,7 +62,7 @@ export function App() {
         <Route path="/admin/v1/sender-wabas" element={<SenderWabas />} />
         <Route path="/admin/sender-registration" element={<SenderRegistration />} />
         <Route path="/admin/registered-senders" element={<RegisteredSenders />} />
-        <Route path="/transmissoes" element={<Broadcast />} />
+        <Route path="/transmissoes" element={<Broadcast mode="simple" />} />
         <Route path="/admin/v1/users" element={<AdminUsersV1 />} />
         <Route path="/admin/v1/security" element={<Security />} />
       </Route>

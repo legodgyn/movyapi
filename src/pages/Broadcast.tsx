@@ -1208,9 +1208,13 @@ function buildDispatchPayload(params: {
   };
 }
 
-export function Broadcast() {
+type BroadcastProps = {
+  mode?: BroadcastMode;
+};
+
+export function Broadcast({ mode = "simple" }: BroadcastProps) {
   const [activeStep, setActiveStep] = useState<WizardStep>("sender");
-  const [plan, setPlan] = useState<BroadcastPlan>(() => normalizeBroadcastPlan(readStored(LOCAL_BROADCAST_PLAN_KEY, defaultPlan)));
+  const [plan, setPlan] = useState<BroadcastPlan>(() => normalizeBroadcastPlan({ ...readStored(LOCAL_BROADCAST_PLAN_KEY, defaultPlan), mode }));
   const [run, setRun] = useState<BroadcastRun>(() => normalizeRun(readStored(LOCAL_BROADCAST_RUN_KEY, defaultRun)));
   const [senders, setSenders] = useState<InfobipApi[]>([]);
   const [templates, setTemplates] = useState<SavedTemplate[]>([]);
@@ -1223,6 +1227,7 @@ export function Broadcast() {
   const [loading, setLoading] = useState(false);
   const [isDispatching, setIsDispatching] = useState(false);
   const [status, setStatus] = useState("");
+  const fixedMode = mode;
 
   const selectedSender = useMemo(
     () => senders.find((sender) => sender.id === plan.senderId),
@@ -1482,16 +1487,6 @@ export function Broadcast() {
         },
       };
     });
-  }
-
-  function setBroadcastMode(mode: BroadcastMode) {
-    updatePlan((currentPlan) => ({
-      ...currentPlan,
-      mode,
-      senderIds: mode === "random" ? currentPlan.senderIds.length ? currentPlan.senderIds : currentPlan.senderId ? [currentPlan.senderId] : [] : [],
-      senderId: mode === "simple" ? currentPlan.senderId || currentPlan.senderIds[0] || "" : currentPlan.senderId,
-    }));
-    setStatus(mode === "random" ? "Modo randomico: a fila alterna remetentes e templates contato a contato." : "Modo simples: um remetente assina todo o lote.");
   }
 
   function toggleRandomSender(senderId: string) {
@@ -2148,6 +2143,19 @@ export function Broadcast() {
   }, []);
 
   useEffect(() => {
+    setPlan((currentPlan) => {
+      if (currentPlan.mode === fixedMode) return currentPlan;
+      return persistPlan({
+        ...currentPlan,
+        mode: fixedMode,
+        senderIds: fixedMode === "random" ? currentPlan.senderIds.length ? currentPlan.senderIds : currentPlan.senderId ? [currentPlan.senderId] : [] : [],
+        senderId: fixedMode === "simple" ? currentPlan.senderId || currentPlan.senderIds[0] || "" : currentPlan.senderId,
+      });
+    });
+    setStatus(fixedMode === "random" ? "Broadcast randomico: alterna remetentes e templates contato a contato." : "Broadcast simples: um remetente assina todo o lote.");
+  }, [fixedMode]);
+
+  useEffect(() => {
     const refresh = () => {
       if (!isDispatching && run.status !== "sending") void loadOptions();
     };
@@ -2297,7 +2305,7 @@ export function Broadcast() {
           <div>
             <h1>
               <Megaphone size={18} />
-              Novo Broadcast Cloud
+              {isRandomMode ? "Broadcast Randomico" : "Broadcast Simples"}
             </h1>
             <div className="broadcast-stepper">
               {steps.map((step, index) => {
@@ -2335,25 +2343,6 @@ export function Broadcast() {
             </button>
           </div>
         </header>
-
-        <div className="broadcast-mode-switch">
-          <button
-            className={plan.mode === "simple" ? "broadcast-mode-card active" : "broadcast-mode-card"}
-            type="button"
-            onClick={() => setBroadcastMode("simple")}
-          >
-            <strong>Broadcast Simples</strong>
-            <span>Um remetente, templates e etiquetas vinculadas em ordem.</span>
-          </button>
-          <button
-            className={plan.mode === "random" ? "broadcast-mode-card active" : "broadcast-mode-card"}
-            type="button"
-            onClick={() => setBroadcastMode("random")}
-          >
-            <strong>Broadcast Randomico</strong>
-            <span>Alterna remetentes e templates automaticamente contato a contato.</span>
-          </button>
-        </div>
 
         <section className="broadcast-wizard-layout">
         <div className="card broadcast-wizard-main">
