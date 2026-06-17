@@ -30,8 +30,10 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { savedTemplates } from "../lib/services";
-import type { ContactTag, SavedTemplate } from "../lib/types";
+import { broadcasts, contacts, infobipApis, savedTemplates } from "../lib/services";
+import { config } from "../lib/config";
+import { unwrapList } from "../lib/api";
+import type { ContactItem, ContactTag, InfobipApi, SavedTemplate } from "../lib/types";
 
 type FlowNodeKind = "start" | "text" | "audio" | "video" | "image" | "delay" | "interactive" | "blacklist";
 
@@ -54,6 +56,7 @@ type FlowNodeData = {
 
 type FlowRun = {
   status: "idle" | "sending" | "paused" | "done";
+  senderId: string;
   tagId: string;
   total: number;
   sent: number;
@@ -62,10 +65,60 @@ type FlowRun = {
   waiting: number;
   currentStep: string;
   events: string[];
+  messageIds: string[];
+  statusByMessageId: Record<string, FlowMessageStatus>;
+  startedAt?: string;
+};
+
+type FlowMessageStatus = {
+  id: string;
+  status: string;
+  timestamp?: number;
+  recipientId?: string;
+  errorCode?: string | number;
+  errorTitle?: string;
+  errorMessage?: string;
+};
+
+type FlowRecipient = ContactItem & {
+  phone: string;
+  tagId: string;
+  tagName: string;
+};
+
+type BmSettingsData = {
+  id?: string;
+  name?: string;
+  businessName?: string;
+  label?: string;
+  status?: string;
+  accessToken?: string;
+  defaultWabaId?: string;
+  wabaId?: string;
+  defaultPhoneNumberId?: string;
+  phoneNumberId?: string;
+  phoneNumber?: string;
+  phones?: Array<{ id: string; display_phone_number?: string; verified_name?: string; quality_rating?: string; status?: string }>;
+  connectedPhoneIds?: string[];
+};
+
+type ConnectedSender = {
+  id: string;
+  bmId: string;
+  bmName: string;
+  wabaId: string;
+  phoneNumberId: string;
+  phone: string;
+  verifiedName: string;
+  quality: string;
+  connectedAt: string;
 };
 
 const LOCAL_FLOW_EDITOR_KEY = "scaleapi.flowEditor";
 const LOCAL_FLOW_RUN_KEY = "scaleapi.flowRun";
+const LOCAL_BM_SETTINGS_KEY = "scaleapi.bmSettings";
+const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
+const LOCAL_CONNECTED_SENDERS_KEY = "movy.connectedSenders";
 
 const fallbackTemplates: SavedTemplate[] = [
   {
@@ -98,14 +151,17 @@ const fallbackTemplates: SavedTemplate[] = [
 
 const defaultRun: FlowRun = {
   status: "idle",
+  senderId: "",
   tagId: "",
   total: 0,
   sent: 0,
   delivered: 0,
   failed: 0,
   waiting: 0,
-  currentStep: "Aguardando início",
+  currentStep: "Aguardando inicio",
   events: [],
+  messageIds: [],
+  statusByMessageId: {},
 };
 
 const fallbackTags: ContactTag[] = [
@@ -252,7 +308,14 @@ function readStoredFlow() {
 
 function readStoredRun(): FlowRun {
   try {
-    return { ...defaultRun, ...JSON.parse(localStorage.getItem(LOCAL_FLOW_RUN_KEY) || "{}") };
+    const stored = JSON.parse(localStorage.getItem(LOCAL_FLOW_RUN_KEY) || "{}");
+    return {
+      ...defaultRun,
+      ...stored,
+      events: Array.isArray(stored.events) ? stored.events : [],
+      messageIds: Array.isArray(stored.messageIds) ? stored.messageIds : [],
+      statusByMessageId: stored.statusByMessageId && typeof stored.statusByMessageId === "object" ? stored.statusByMessageId : {},
+    };
   } catch {
     return defaultRun;
   }
@@ -275,6 +338,399 @@ function tagName(tag: ContactTag) {
 function tagCount(tag: ContactTag) {
   const value = Number(tag.contacts_count ?? tag.count ?? 0);
   return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function onlyDigits(value: unknown) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function nowTime() {
+  return new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function movyBackendUrl() {
+  const configured = config.mediaBackendUrl || config.localBackendUrl;
+  if (/^https?:\/\//i.test(configured)) return configured.replace(/\/$/, "");
+  const origin =
+    typeof window !== "undefined" && window.location.origin && !window.location.origin.includes("localhost")
+      ? window.location.origin
+      : config.publicAppUrl;
+  return `${origin.replace(/\/$/, "")}/${configured.replace(/^\/+|\/+$/g, "")}`;
+}
+
+function accountKey(account: BmSettingsData, fallback = "") {
+  return String(account.defaultWabaId || account.wabaId || account.id || fallback).trim();
+}
+
+function readConnectedSenders() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LOCAL_CONNECTED_SENDERS_KEY) || "[]");
+    return Array.isArray(stored) ? (stored as ConnectedSender[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function readBmAccounts(): BmSettingsData[] {
+  const accounts: BmSettingsData[] = [];
+  try {
+    const storedAccounts = JSON.parse(localStorage.getItem(LOCAL_BM_ACCOUNTS_KEY) || "[]");
+    if (Array.isArray(storedAccounts)) accounts.push(...storedAccounts);
+  } catch {
+    // optional local data.
+  }
+  try {
+    const singleSettings = JSON.parse(localStorage.getItem(LOCAL_BM_SETTINGS_KEY) || "{}") as BmSettingsData;
+    if (singleSettings && (singleSettings.accessToken || singleSettings.defaultWabaId || singleSettings.wabaId)) {
+      accounts.push(singleSettings);
+    }
+  } catch {
+    // optional legacy local data.
+  }
+
+  return accounts.filter((account, index) => {
+    const key = account.id || account.defaultWabaId || account.wabaId || account.accessToken || String(index);
+    return accounts.findIndex((item, itemIndex) => (item.id || item.defaultWabaId || item.wabaId || item.accessToken || String(itemIndex)) === key) === index;
+  });
+}
+
+function normalizeConnectedSender(sender: ConnectedSender, index: number): InfobipApi {
+  return {
+    id: `connected-${sender.bmId || sender.wabaId || index}-phone-${sender.phoneNumberId}`,
+    name: sender.verifiedName || sender.phone || sender.bmName || `Remetente ${index + 1}`,
+    label: sender.verifiedName || sender.phone || sender.bmName || `Remetente ${index + 1}`,
+    businessName: sender.bmName,
+    defaultWabaId: sender.wabaId,
+    wabaId: sender.wabaId,
+    defaultPhoneNumberId: sender.phoneNumberId,
+    phoneNumberId: sender.phoneNumberId,
+    phoneNumber: sender.phone,
+    verifiedName: sender.verifiedName,
+    qualityRating: sender.quality,
+    sender_number: sender.phone,
+    senderNumber: sender.phone,
+    api_type: "whatsapp_cloud",
+    base_url: sender.wabaId ? `WABA ${sender.wabaId}` : "WhatsApp Cloud API",
+    status: "connected",
+  } as InfobipApi;
+}
+
+function normalizePhoneSender(account: BmSettingsData, phone: NonNullable<BmSettingsData["phones"]>[number], index: number): InfobipApi {
+  const wabaId = account.defaultWabaId || account.wabaId || "";
+  const phoneNumberId = phone.id;
+  const name = account.name || account.businessName || account.label || `BM ${index + 1}`;
+  const verifiedName = phone.verified_name || name;
+  return {
+    ...account,
+    id: `bm-${account.id || wabaId || index}-phone-${phoneNumberId}`,
+    name: verifiedName,
+    label: verifiedName,
+    businessName: name,
+    defaultPhoneNumberId: phoneNumberId,
+    phoneNumberId,
+    phoneNumber: phone.display_phone_number || "",
+    verifiedName,
+    sender_number: phone.display_phone_number || phoneNumberId || wabaId,
+    senderNumber: phone.display_phone_number || phoneNumberId || wabaId,
+    api_type: "whatsapp_cloud",
+    base_url: wabaId ? `WABA ${wabaId}` : "WhatsApp Cloud API",
+    status: account.status || "connected",
+  } as InfobipApi;
+}
+
+function senderDedupeKey(sender: InfobipApi) {
+  const wabaId = String(sender.defaultWabaId || sender.wabaId || "").trim();
+  const phoneNumberId = String(sender.defaultPhoneNumberId || sender.phoneNumberId || "").trim();
+  const phone = onlyDigits(sender.phoneNumber || sender.sender_number || sender.senderNumber);
+  if (wabaId && phoneNumberId) return `waba-phone-id:${wabaId}:${phoneNumberId}`;
+  if (phoneNumberId) return `phone-id:${phoneNumberId}`;
+  if (wabaId && phone) return `waba-phone:${wabaId}:${phone}`;
+  if (phone) return `phone:${phone}`;
+  return `id:${sender.id}`;
+}
+
+function dedupeSenders(senders: InfobipApi[]) {
+  const byKey = new Map<string, InfobipApi>();
+  senders.forEach((sender) => byKey.set(senderDedupeKey(sender), { ...byKey.get(senderDedupeKey(sender)), ...sender }));
+  return Array.from(byKey.values());
+}
+
+function readBmSenders(): InfobipApi[] {
+  const accounts = readBmAccounts();
+  const connected = readConnectedSenders().map(normalizeConnectedSender);
+  const accountSenders = accounts.flatMap((account, accountIndex) => {
+    const wabaId = account.defaultWabaId || account.wabaId || "";
+    const connectedPhoneIds = new Set([
+      account.defaultPhoneNumberId || account.phoneNumberId || "",
+      ...(account.connectedPhoneIds || []),
+      ...readConnectedSenders()
+        .filter((sender) => sender.bmId === accountKey(account) || sender.wabaId === wabaId)
+        .map((sender) => sender.phoneNumberId),
+    ].filter(Boolean));
+    const phoneSenders = (account.phones || [])
+      .filter((phone) => connectedPhoneIds.has(phone.id))
+      .map((phone) => normalizePhoneSender(account, phone, accountIndex));
+    if (phoneSenders.length) return phoneSenders;
+    const fallbackPhoneId = account.defaultPhoneNumberId || account.phoneNumberId || "";
+    if (!fallbackPhoneId) return [];
+    return [
+      {
+        ...account,
+        id: `bm-${account.id || wabaId || accountIndex}-phone-${fallbackPhoneId}`,
+        name: account.name || account.businessName || account.label || "Remetente conectado",
+        label: account.name || account.businessName || account.label || "Remetente conectado",
+        businessName: account.name || account.businessName || account.label,
+        defaultWabaId: wabaId,
+        wabaId,
+        defaultPhoneNumberId: fallbackPhoneId,
+        phoneNumberId: fallbackPhoneId,
+        phoneNumber: account.phoneNumber || fallbackPhoneId,
+        verifiedName: account.name || account.businessName || account.label,
+        sender_number: account.phoneNumber || fallbackPhoneId,
+        senderNumber: account.phoneNumber || fallbackPhoneId,
+        api_type: "whatsapp_cloud",
+        base_url: wabaId ? `WABA ${wabaId}` : "WhatsApp Cloud API",
+        status: account.status || "connected",
+      } as InfobipApi,
+    ];
+  });
+  return dedupeSenders([...connected, ...accountSenders]);
+}
+
+function findAccountForSender(sender?: InfobipApi) {
+  if (!sender) return undefined;
+  const senderWaba = String(sender.defaultWabaId || sender.wabaId || "").trim();
+  const senderPhoneId = String(sender.defaultPhoneNumberId || sender.phoneNumberId || "").trim();
+  const senderBm = String(sender.bmId || "").trim();
+  return readBmAccounts().find((account) => {
+    const accountWaba = String(account.defaultWabaId || account.wabaId || "").trim();
+    const accountKeyValue = accountKey(account);
+    const phones = account.phones || [];
+    return (
+      (senderBm && accountKeyValue === senderBm) ||
+      (senderWaba && accountWaba === senderWaba) ||
+      (senderPhoneId && phones.some((phone) => phone.id === senderPhoneId))
+    );
+  });
+}
+
+function senderLabel(sender: InfobipApi) {
+  return String(sender.name || sender.label || sender.sender_number || sender.senderNumber || sender.id);
+}
+
+function senderNumber(sender: InfobipApi) {
+  return String(sender.phoneNumber || sender.sender_number || sender.senderNumber || sender.base_url || "WhatsApp Cloud API");
+}
+
+function senderBusinessLabel(sender: InfobipApi) {
+  return String(sender.businessName || sender.label || sender.base_url || "");
+}
+
+function contactPhone(contact: ContactItem) {
+  return String(contact.phone || contact.telefone || contact.whatsapp || contact.numero || contact.celular || "");
+}
+
+function normalizeRecipientPhone(value: unknown) {
+  const digits = onlyDigits(value);
+  if (!digits) return "";
+  if (digits.startsWith("55") && (digits.length === 12 || digits.length === 13)) return digits;
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
+}
+
+function readLocalTagContacts(tag: ContactTag): FlowRecipient[] {
+  try {
+    const store = JSON.parse(localStorage.getItem("scaleapi.localContacts") || "{}") as Record<string, { tag: ContactTag; contacts: ContactItem[] }>;
+    const entry = store[tag.id];
+    if (!entry?.contacts?.length) return [];
+    return entry.contacts
+      .map((contact, index) => ({
+        ...contact,
+        id: contact.id || `${tag.id}-${index}`,
+        phone: normalizeRecipientPhone(contactPhone(contact)),
+        tagId: tag.id,
+        tagName: tagName(tag),
+      }))
+      .filter((contact) => contact.phone);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchTagRecipients(tag: ContactTag): Promise<FlowRecipient[]> {
+  const local = readLocalTagContacts(tag);
+  if (local.length) return local;
+
+  const expected = Math.max(tagCount(tag), 1);
+  const pageSize = 500;
+  const collected: ContactItem[] = [];
+  for (let offset = 0; offset < expected + pageSize; offset += pageSize) {
+    const payload = await contacts.tagContacts(tag.id, pageSize, offset);
+    const page = unwrapList<ContactItem>(payload);
+    if (!page.length) break;
+    collected.push(...page);
+    if (page.length < pageSize || collected.length >= expected) break;
+  }
+
+  return collected
+    .map((contact, index) => ({
+      ...contact,
+      id: contact.id || `${tag.id}-${index}`,
+      phone: normalizeRecipientPhone(contactPhone(contact)),
+      tagId: tag.id,
+      tagName: tagName(tag),
+    }))
+    .filter((contact) => contact.phone);
+}
+
+function templateMediaType(template: SavedTemplate) {
+  const components = Array.isArray(template.components) ? template.components : [];
+  const header = components.find((component) => String(asRecord(component).type || "").toUpperCase() === "HEADER");
+  const format = String(asRecord(header).format || "").toLowerCase();
+  if (format.includes("video")) return "video";
+  if (format.includes("document")) return "document";
+  if (format.includes("image")) return "image";
+  const legacy = String(template.media_type || template.header_type || "").toLowerCase();
+  if (legacy.includes("video")) return "video";
+  if (legacy.includes("document")) return "document";
+  if (legacy.includes("image")) return "image";
+  return "";
+}
+
+function normalizeTemplateParameterText(value: string) {
+  return String(value || "")
+    .replace(/\r\n|\r|\n|\u2028|\u2029/g, "\v")
+    .replace(/\t+/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
+function arrayFromResponse(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (Array.isArray(value)) return value;
+  }
+  const data = asRecord(record.data);
+  for (const key of keys) {
+    const value = data[key];
+    if (Array.isArray(value)) return value;
+  }
+  return [];
+}
+
+function numberFromResponse(record: Record<string, unknown>, keys: string[], fallback = 0) {
+  for (const key of keys) {
+    const value = Number(record[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  const totals = asRecord(record.totals);
+  for (const key of keys) {
+    const value = Number(totals[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return fallback;
+}
+
+function backendMessageIds(response: unknown) {
+  const record = asRecord(response);
+  const messages = arrayFromResponse(record, ["messageIds", "message_ids", "messages", "results", "items"]);
+  return Array.from(
+    new Set(
+      messages
+        .map((item) => {
+          if (typeof item === "string") return item;
+          const itemRecord = asRecord(item);
+          return String(itemRecord.id || itemRecord.messageId || itemRecord.message_id || itemRecord.wamid || itemRecord.wamId || "");
+        })
+        .filter(Boolean),
+    ),
+  );
+}
+
+function responseEvents(response: unknown) {
+  const record = asRecord(response);
+  const rawEvents = arrayFromResponse(record, ["events", "logs", "results", "items"]).slice(0, 20);
+  return rawEvents.map((item) => {
+    const itemRecord = asRecord(item);
+    const statusValue = String(itemRecord.status || itemRecord.type || "").toLowerCase();
+    const isFailed = ["failed", "error", "rejected"].includes(statusValue) || Boolean(itemRecord.error || itemRecord.errorMessage);
+    const phone = String(itemRecord.phone || itemRecord.to || itemRecord.recipient || itemRecord.recipientId || "");
+    const message =
+      itemRecord.message ||
+      itemRecord.errorMessage ||
+      itemRecord.error ||
+      (phone ? `${phone} ${isFailed ? "falhou" : "aceito pelo sistema"}.` : "Evento retornado pelo sistema.");
+    return `${nowTime()} - ${String(message)}`;
+  });
+}
+
+function formatBackendError(error: unknown) {
+  const record = asRecord(error);
+  const response = asRecord(record.response);
+  const data = asRecord(response.data);
+  const apiError = asRecord(data.error);
+  const message =
+    apiError.error_user_msg ||
+    apiError.message ||
+    data.error_message ||
+    data.message ||
+    record.message ||
+    "erro desconhecido";
+  const code = apiError.code || data.code || response.status;
+  const subcode = apiError.error_subcode || data.error_subcode;
+  return [String(message), code ? `codigo ${code}` : "", subcode ? `subcodigo ${subcode}` : ""].filter(Boolean).join(" | ");
+}
+
+async function dispatchThroughSystem(payload: Record<string, unknown>, runtimeCredentials?: Record<string, unknown>) {
+  const localBody = { ...payload, runtimeCredentials };
+  try {
+    const response = await fetch(`${movyBackendUrl()}/broadcasts/dispatch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(localBody),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const record = asRecord(data);
+      const details = arrayFromResponse(record, ["events", "results"])
+        .map((item) => String(asRecord(item).message || asRecord(item).errorMessage || asRecord(item).error || ""))
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(" | ");
+      throw new Error(String(record.message || record.error || details || `servidor local HTTP ${response.status}`));
+    }
+    return data;
+  } catch (localError) {
+    if (localError instanceof Error && !/Failed to fetch|NetworkError|Network Error/i.test(localError.message)) {
+      throw localError;
+    }
+  }
+
+  try {
+    return await broadcasts.dispatch(payload);
+  } catch (dispatchError) {
+    try {
+      const created = await broadcasts.create(payload);
+      const createdRecord = asRecord(created);
+      const id = String(createdRecord.id || asRecord(createdRecord.data).id || payload.id || "");
+      if (!id) throw new Error("o backend criou o lote, mas nao retornou ID para iniciar o disparo");
+      return await broadcasts.start(id, { payload, broadcastId: id });
+    } catch (createError) {
+      throw new Error(`dispatch: ${formatBackendError(dispatchError)} | create/start: ${formatBackendError(createError)}`);
+    }
+  }
+}
+
+async function fetchLocalMessageStatuses(messageIds: string[]) {
+  if (!messageIds.length) return [];
+  const response = await fetch(`${movyBackendUrl()}/broadcast/statuses?ids=${encodeURIComponent(messageIds.join(","))}`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `Status local HTTP ${response.status}`);
+  return Array.isArray(data.statuses) ? (data.statuses as FlowMessageStatus[]) : [];
 }
 
 function FlowCardNode({ data, selected }: NodeProps<FlowNodeData>) {
@@ -351,6 +807,7 @@ export function Flows() {
   const [flowName, setFlowName] = useState(stored?.name || "teste");
   const [selectedNodeId, setSelectedNodeId] = useState(stored?.selectedNodeId || "start");
   const [templates, setTemplates] = useState<SavedTemplate[]>(fallbackTemplates);
+  const [senders, setSenders] = useState<InfobipApi[]>([]);
   const [nodeMenu, setNodeMenu] = useState<{
     x: number;
     y: number;
@@ -384,6 +841,10 @@ export function Flows() {
   const selectedRunTag = useMemo(
     () => tags.find((tag) => tag.id === flowRun.tagId) || tags[0],
     [flowRun.tagId, tags],
+  );
+  const selectedRunSender = useMemo(
+    () => senders.find((sender) => sender.id === flowRun.senderId) || senders[0],
+    [flowRun.senderId, senders],
   );
   const runPercent = flowRun.total ? Math.min(100, Math.round(((flowRun.delivered + flowRun.failed) / flowRun.total) * 100)) : 0;
   const canOpenBroadcast = Boolean(savedFlowAt) && !flowDirty;
@@ -456,39 +917,51 @@ export function Flows() {
   }, []);
 
   useEffect(() => {
+    infobipApis
+      .normalizedList()
+      .then((items) => setSenders(dedupeSenders([...readBmSenders(), ...items])))
+      .catch(() => setSenders(readBmSenders()));
+  }, []);
+
+  useEffect(() => {
     setTags(readLocalContactTags());
   }, []);
 
   useEffect(() => {
-    if (flowRun.status !== "sending") return;
-    const timer = window.setInterval(() => {
-      setFlowRun((current) => {
-        if (current.status !== "sending" || current.sent >= current.total) return current;
-        const buttons = nodes.find((node) => node.id === "start")?.data.buttons || [];
-        const chunk = Math.min(current.total - current.sent, Math.max(1, Math.ceil(current.total * 0.07)));
-        const failed = Math.floor(chunk * 0.025);
-        const delivered = chunk - failed;
-        const waiting = Math.max(0, current.waiting + delivered - Math.floor(delivered * 0.42));
-        const button = buttons[current.events.length % Math.max(buttons.length, 1)] || "sem botão";
-        const next: FlowRun = {
-          ...current,
-          sent: current.sent + chunk,
-          delivered: current.delivered + delivered,
-          failed: current.failed + failed,
-          waiting,
-          currentStep: current.sent + chunk >= current.total ? "Fluxo finalizado" : `Aguardando resposta: ${button}`,
-          status: current.sent + chunk >= current.total ? "done" : "sending",
-          events: [
-            `${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} - ${delivered} entregues, ${failed} falhas, rota ${button}`,
-            ...current.events,
-          ].slice(0, 7),
-        };
-        localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify(next));
-        return next;
-      });
-    }, 1300);
+    if (!flowRun.messageIds.length || flowRun.status === "idle" || flowRun.status === "paused") return;
+    const timer = window.setInterval(async () => {
+      try {
+        const statuses = await fetchLocalMessageStatuses(flowRun.messageIds);
+        if (!statuses.length) return;
+        setFlowRun((current) => {
+          const statusByMessageId = { ...current.statusByMessageId };
+          statuses.forEach((statusItem) => {
+            if (statusItem.id) statusByMessageId[statusItem.id] = statusItem;
+          });
+          const values = Object.values(statusByMessageId).map((item) => String(item.status || "").toLowerCase());
+          const delivered = values.filter((value) => ["delivered", "read", "sent"].includes(value)).length;
+          const failed = values.filter((value) => ["failed", "error", "undeliverable"].includes(value)).length;
+          const waiting = Math.max(0, current.sent - delivered - failed);
+          const done = current.sent > 0 && waiting === 0;
+          const next: FlowRun = {
+            ...current,
+            delivered,
+            failed,
+            waiting,
+            statusByMessageId,
+            status: done ? "done" : current.status,
+            currentStep: done ? "Fluxo finalizado" : "Aguardando webhook/status da Cloud API",
+          };
+          localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify(next));
+          return next;
+        });
+      } catch {
+        // Status local pode nao existir antes do webhook receber evento.
+      }
+    }, 3500);
     return () => window.clearInterval(timer);
-  }, [flowRun.status, nodes]);
+  }, [flowRun.messageIds, flowRun.status]);
+
 
   function rebuildButtonBranches(buttons: string[]) {
     markFlowDirty();
@@ -651,22 +1124,249 @@ export function Flows() {
     localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify(nextRun));
   }
 
-  function startFlowBroadcast() {
-    const tag = selectedRunTag || fallbackTags[0];
-    const total = Math.max(1, tagCount(tag));
+  async function startFlowBroadcast() {
+    const sender = selectedRunSender;
+    const tag = selectedRunTag;
+    const startNode = nodes.find((node) => node.id === "start");
+    const template = templates.find((item) => item.id === startNode?.data.templateId);
+    if (!sender) {
+      setStatus("Selecione um remetente conectado antes de disparar o fluxo.");
+      return;
+    }
+    if (!tag) {
+      setStatus("Selecione uma etiqueta de contatos antes de disparar o fluxo.");
+      return;
+    }
+    if (!template) {
+      setStatus("Selecione e salve um template inicial antes de disparar o fluxo.");
+      return;
+    }
+
+    const account = findAccountForSender(sender);
+    const phoneNumberId = String(sender.phoneNumberId || sender.defaultPhoneNumberId || account?.phoneNumberId || account?.defaultPhoneNumberId || "").trim();
+    const accessToken = String(sender.accessToken || sender.token || account?.accessToken || "").trim();
+    if (!phoneNumberId || !accessToken) {
+      setStatus("Remetente sem Phone Number ID ou token. Confira Configuracoes BM e Registrar Remetente.");
+      return;
+    }
+
+    saveFlow();
+    setStatus("Carregando contatos da etiqueta...");
+    updateRun({
+      ...defaultRun,
+      status: "sending",
+      senderId: sender.id,
+      tagId: tag.id,
+      total: Math.max(tagCount(tag), 1),
+      currentStep: "Carregando destinatarios",
+      events: [`${nowTime()} - Preparando fluxo ${flowName} para ${tagName(tag)}.`],
+      startedAt: new Date().toISOString(),
+    });
+
+    let recipients: FlowRecipient[] = [];
+    try {
+      recipients = await fetchTagRecipients(tag);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "falha desconhecida";
+      updateRun({
+        ...defaultRun,
+        status: "done",
+        senderId: sender.id,
+        tagId: tag.id,
+        failed: 1,
+        currentStep: "Falha ao carregar contatos",
+        events: [`${nowTime()} - Nao foi possivel carregar contatos: ${message}`],
+      });
+      setStatus(`Nao foi possivel carregar os contatos: ${message}`);
+      return;
+    }
+
+    const total = recipients.length;
+    if (!total) {
+      updateRun({
+        ...defaultRun,
+        status: "done",
+        senderId: sender.id,
+        tagId: tag.id,
+        currentStep: "Sem destinatarios",
+        events: [`${nowTime()} - Nenhum destinatario valido encontrado na etiqueta ${tagName(tag)}.`],
+      });
+      setStatus("Nenhum destinatario valido encontrado na etiqueta selecionada.");
+      return;
+    }
+
+    const variables = Object.fromEntries(
+      (startNode?.data.variables || []).map((variable) => [
+        variable,
+        normalizeTemplateParameterText(startNode?.data.variableValues?.[variable] || ""),
+      ]),
+    );
+    const mediaUrl = String(startNode?.data.imageUrl || template.media_url || template.header_url || "").trim();
+    const lotId = `${sender.id}-${template.id}-${tag.id}`;
+    const payload: Record<string, unknown> = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      status: "created",
+      channel: "whatsapp_cloud_flow",
+      mode: "flow",
+      flow: {
+        name: flowName,
+        nodes,
+        edges,
+        startNodeId: "start",
+      },
+      sender: {
+        id: sender.id,
+        name: senderLabel(sender),
+        bmName: senderBusinessLabel(sender),
+        wabaId: sender.defaultWabaId || sender.wabaId || "",
+        phoneNumberId,
+        phoneNumber: senderNumber(sender),
+        accessToken,
+        apiType: sender.api_type || "whatsapp_cloud",
+      },
+      totals: {
+        contacts: total,
+        recipients: total,
+        lots: 1,
+        templates: 1,
+        tags: 1,
+      },
+      lots: [
+        {
+          id: lotId,
+          index: 1,
+          sender: {
+            id: sender.id,
+            name: senderLabel(sender),
+            bmName: senderBusinessLabel(sender),
+            wabaId: sender.defaultWabaId || sender.wabaId || "",
+            phoneNumberId,
+            phoneNumber: senderNumber(sender),
+            accessToken,
+            apiType: sender.api_type || "whatsapp_cloud",
+          },
+          template: {
+            id: template.id,
+            name: template.name,
+            language: template.language || "pt_BR",
+            body_text: templateBody(template),
+            footer_text: templateFooter(template),
+            buttons: template.buttons || [],
+            components: template.components || [],
+            media_type: template.media_type || "",
+            header_type: template.header_type || "",
+            wabaId: template.waba_id || sender.defaultWabaId || sender.wabaId || "",
+            variables,
+            media: mediaUrl
+              ? {
+                  url: mediaUrl,
+                  name: mediaUrl.split("/").pop() || "midia",
+                  type: templateMediaType(template) || "image",
+                }
+              : null,
+          },
+          audience: {
+            tagId: tag.id,
+            tagName: tagName(tag),
+            contacts: total,
+          },
+          recipients: recipients.map((recipient) => ({
+            id: recipient.id,
+            name: recipient.name || recipient.nome || "",
+            phone: normalizeRecipientPhone(recipient.phone),
+            tagId: recipient.tagId,
+            tagName: recipient.tagName,
+            templateId: template.id,
+            templateName: template.name,
+            variables,
+          })),
+        },
+      ],
+      recipients: recipients.map((recipient) => ({
+        id: recipient.id,
+        name: recipient.name || recipient.nome || "",
+        phone: normalizeRecipientPhone(recipient.phone),
+        tagId: recipient.tagId,
+        tagName: recipient.tagName,
+        lotId,
+        senderId: sender.id,
+        senderName: senderLabel(sender),
+        phoneNumberId,
+        accessToken,
+        templateId: template.id,
+        templateName: template.name,
+        variables,
+        mediaUrl,
+      })),
+    };
+
     updateRun({
       status: "sending",
+      senderId: sender.id,
       tagId: tag.id,
       total,
       sent: 0,
       delivered: 0,
       failed: 0,
-      waiting: 0,
+      waiting: total,
       currentStep: "Enviando template inicial",
-      events: [`${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} - Jornada iniciada para ${tagName(tag)}`],
+      events: [`${nowTime()} - Lote do fluxo criado com ${total.toLocaleString("pt-BR")} destinatario(s).`],
+      messageIds: [],
+      statusByMessageId: {},
+      startedAt: new Date().toISOString(),
     });
-    saveFlow();
-    setStatus("Broadcast do fluxo iniciado em modo local.");
+
+    try {
+      const response = await dispatchThroughSystem(payload, { phoneNumberId, accessToken });
+      const responseRecord = asRecord(response);
+      const messageIds = backendMessageIds(response);
+      const accepted = numberFromResponse(responseRecord, ["accepted", "accepted_count", "sent", "sent_count", "queued", "queued_count"], messageIds.length);
+      const failed = numberFromResponse(responseRecord, ["failed", "failed_count", "errors", "error_count"], 0);
+      const waiting = Math.max(0, accepted - failed);
+      const next: FlowRun = {
+        status: failed && !accepted ? "done" : "sending",
+        senderId: sender.id,
+        tagId: tag.id,
+        total,
+        sent: accepted,
+        delivered: 0,
+        failed,
+        waiting,
+        currentStep: failed && !accepted ? "Falha no envio inicial" : "Aceito pela Meta, aguardando webhook",
+        events: [
+          `${nowTime()} - ${accepted.toLocaleString("pt-BR")} mensagem(ns) aceita(s) pela Meta.`,
+          ...responseEvents(response),
+        ].slice(0, 12),
+        messageIds,
+        statusByMessageId: {},
+        startedAt: new Date().toISOString(),
+      };
+      updateRun(next);
+      setStatus(
+        failed
+          ? "O fluxo retornou falhas imediatas. Veja os detalhes no historico do disparo."
+          : "Fluxo enviado. Acompanhe entrega/falha pelo webhook da Cloud API.",
+      );
+    } catch (error) {
+      const message = formatBackendError(error);
+      updateRun({
+        status: "done",
+        senderId: sender.id,
+        tagId: tag.id,
+        total,
+        sent: 0,
+        delivered: 0,
+        failed: total,
+        waiting: 0,
+        currentStep: "Falha ao disparar",
+        events: [`${nowTime()} - Falha ao disparar fluxo: ${message}`],
+        messageIds: [],
+        statusByMessageId: {},
+        startedAt: new Date().toISOString(),
+      });
+      setStatus(`Falha ao disparar fluxo: ${message}`);
+    }
   }
 
   function pauseFlowBroadcast() {
@@ -934,13 +1634,29 @@ export function Flows() {
           <section className="dc-flow-broadcast dc-flow-broadcast-modal">
             <div className="dc-flow-broadcast-head">
               <div>
-                <strong>Broadcast do fluxo</strong>
-                <span>{flowRun.status === "idle" ? "Configure a base e acompanhe o disparo do fluxo salvo." : flowRun.currentStep}</span>
+                <strong>Disparar fluxo salvo</strong>
+                <span>{flowRun.status === "idle" ? "Escolha o remetente e a base para iniciar o template do fluxo." : flowRun.currentStep}</span>
               </div>
               <button className="dc-broadcast-close" type="button" onClick={() => setBroadcastOpen(false)} aria-label="Fechar broadcast">
                 <X size={18} />
               </button>
             </div>
+
+            <label className="field">
+              <span>Remetente conectado</span>
+              <select
+                className="select"
+                value={flowRun.senderId || selectedRunSender?.id || ""}
+                onChange={(event) => updateRun({ ...flowRun, senderId: event.target.value })}
+              >
+                <option value="">Selecione um remetente</option>
+                {senders.map((sender) => (
+                  <option key={sender.id} value={sender.id}>
+                    {senderLabel(sender)} - {senderNumber(sender)}
+                  </option>
+                ))}
+              </select>
+            </label>
 
             <label className="field">
               <span>Base / etiqueta</span>
@@ -965,7 +1681,7 @@ export function Flows() {
 
             <div className="dc-run-grid">
               <div>
-                <span>Enviados</span>
+                <span>Aceitos Meta</span>
                 <strong>{flowRun.sent.toLocaleString("pt-BR")}</strong>
               </div>
               <div>
