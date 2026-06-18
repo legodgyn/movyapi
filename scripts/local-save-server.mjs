@@ -618,6 +618,7 @@ function eventMatches(value, filter, allLabel) {
 
 async function analyticsTransmissions(params = {}) {
   const events = await readBroadcastAnalyticsEvents();
+  const optionEvents = events.filter((event) => inAnalyticsPeriod(event, params.period));
   const filtered = events.filter((event) =>
     inAnalyticsPeriod(event, params.period) &&
     eventMatches(event.bm, params.bm, "Todas as BMs") &&
@@ -712,6 +713,11 @@ async function analyticsTransmissions(params = {}) {
   return {
     ok: true,
     data,
+    options: {
+      bms: Array.from(new Set(optionEvents.map((event) => event.bm || "BM nao informada"))).filter(Boolean).sort(),
+      senders: Array.from(new Set(optionEvents.map((event) => `${event.sender || "Remetente"}${event.phone ? ` - ${event.phone}` : ""}`))).filter(Boolean).sort(),
+      users: Array.from(new Set(optionEvents.map((event) => event.user || "Admin"))).filter(Boolean).sort(),
+    },
     totals: {
       sent: filtered.length,
       accepted: filtered.filter((event) => ["accepted", "sent", "delivered", "read"].includes(String(event.status || ""))).length,

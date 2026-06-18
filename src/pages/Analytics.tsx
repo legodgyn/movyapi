@@ -42,6 +42,12 @@ type ReportRow = {
   createdAt?: string;
 };
 
+type FilterOptions = {
+  bms: string[];
+  senders: string[];
+  users: string[];
+};
+
 const LOCAL_BROADCAST_RUN_KEY = "scaleapi.broadcastRun";
 const LOCAL_BROADCAST_PAYLOAD_KEY = "scaleapi.broadcastLastPayload";
 
@@ -305,6 +311,16 @@ function parseReportRows(payload: Record<string, unknown>): ReportRow[] {
     });
 }
 
+function parseFilterOptions(payload: Record<string, unknown>): FilterOptions {
+  const options = payload.options && typeof payload.options === "object" ? (payload.options as Record<string, unknown>) : {};
+  const read = (key: string) => Array.isArray(options[key]) ? (options[key] as unknown[]).map((item) => String(item)).filter(Boolean) : [];
+  return {
+    bms: read("bms"),
+    senders: read("senders"),
+    users: read("users"),
+  };
+}
+
 function senderDisplay(row: SenderMetric) {
   return row.phone ? `${row.sender} - ${row.phone}` : row.sender;
 }
@@ -312,6 +328,7 @@ function senderDisplay(row: SenderMetric) {
 export function Analytics() {
   const [rows, setRows] = useState<SenderMetric[]>([]);
   const [reportRows, setReportRows] = useState<ReportRow[]>([]);
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({ bms: [], senders: [], users: [] });
   const [query, setQuery] = useState("");
   const [period, setPeriod] = useState("Últimas 24h");
   const [senderFilter, setSenderFilter] = useState("Todos os remetentes");
@@ -329,6 +346,7 @@ export function Analytics() {
         .filter((item) => inPeriod(item.createdAt ?? item.created_at ?? item.startedAt ?? item.updated_at, period))
         .map(fromAnalyticsItem);
       setReportRows(parseReportRows(analyticsPayload as Record<string, unknown>));
+      setFilterOptions(parseFilterOptions(analyticsPayload as Record<string, unknown>));
       const local = localBroadcastMetric();
       const localRows = local && inPeriod(local.lastAt, period) ? [local] : [];
       const merged = mergeMetrics([...analyticsRows, ...localRows]);
@@ -337,6 +355,7 @@ export function Analytics() {
     } catch (error) {
       setRows([]);
       setReportRows([]);
+      setFilterOptions({ bms: [], senders: [], users: [] });
       setStatus(error instanceof Error ? error.message : "Não foi possível carregar analytics reais.");
     } finally {
       setLoading(false);
@@ -383,9 +402,9 @@ export function Analytics() {
     };
   }, [filteredRows]);
 
-  const senders = useMemo(() => Array.from(new Set(rows.map(senderDisplay))).sort(), [rows]);
-  const bms = useMemo(() => Array.from(new Set(rows.map((row) => row.bm))).sort(), [rows]);
-  const users = useMemo(() => Array.from(new Set(rows.map((row) => row.user))).filter(Boolean).sort(), [rows]);
+  const senders = useMemo(() => filterOptions.senders.length ? filterOptions.senders : Array.from(new Set(rows.map(senderDisplay))).sort(), [filterOptions.senders, rows]);
+  const bms = useMemo(() => filterOptions.bms.length ? filterOptions.bms : Array.from(new Set(rows.map((row) => row.bm))).sort(), [filterOptions.bms, rows]);
+  const users = useMemo(() => filterOptions.users.length ? filterOptions.users : Array.from(new Set(rows.map((row) => row.user))).filter(Boolean).sort(), [filterOptions.users, rows]);
   const topRows = filteredRows
     .slice()
     .sort((a, b) => b.sent - a.sent)
