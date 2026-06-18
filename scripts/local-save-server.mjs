@@ -37,6 +37,7 @@ const checkNumberBaseUrl = "https://api.checknumber.ai/v1";
 const sms24hBaseUrl = process.env.SMS24H_API_BASE_URL || "https://api.sms24h.org/stubs/handler_api";
 const sisbratelBaseUrl = process.env.SISBRATEL_API_BASE_URL || "https://app.sisbratel.com/api/external";
 const whatsappStatuses = new Map();
+const FLOW_RUNTIME_KEY = "movy.flowRuntime";
 const graphApiBase = "https://graph.facebook.com/v24.0";
 let lastBroadcastDebug = null;
 
@@ -664,6 +665,333 @@ async function sendCloudMessage(phoneNumberId, token, messagePayload) {
   return { data, messageId };
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function defaultFlowRuntime() {
+  return { sessions: {}, outboundIndex: {}, phoneIndex: {}, events: [] };
+}
+
+async function readFlowRuntime() {
+  const stored = await getStoredValue(FLOW_RUNTIME_KEY);
+  return {
+    ...defaultFlowRuntime(),
+    ...(stored && typeof stored === "object" ? stored : {}),
+    sessions: asRecord(stored?.sessions),
+    outboundIndex: asRecord(stored?.outboundIndex),
+    phoneIndex: asRecord(stored?.phoneIndex),
+    events: Array.isArray(stored?.events) ? stored.events : [],
+  };
+}
+
+async function writeFlowRuntime(runtime) {
+  await setStoredValue(FLOW_RUNTIME_KEY, {
+    sessions: asRecord(runtime.sessions),
+    outboundIndex: asRecord(runtime.outboundIndex),
+    phoneIndex: asRecord(runtime.phoneIndex),
+    events: Array.isArray(runtime.events) ? runtime.events.slice(-500) : [],
+  });
+}
+
+function flowNodeData(node) {
+  return asRecord(asRecord(node).data);
+}
+
+function flowNodes(flow) {
+  return Array.isArray(asRecord(flow).nodes) ? asRecord(flow).nodes : [];
+}
+
+function flowEdges(flow) {
+  return Array.isArray(asRecord(flow).edges) ? asRecord(flow).edges : [];
+}
+
+function findFlowNode(flow, nodeId) {
+  return flowNodes(flow).find((node) => String(asRecord(node).id || "") === String(nodeId || ""));
+}
+
+function findNextFlowEdge(flow, sourceNodeId, replyText = "") {
+  const edges = flowEdges(flow).filter((edge) => String(asRecord(edge).source || "") === String(sourceNodeId || ""));
+  if (!edges.length) return null;
+  const normalizedReply = String(replyText || "").trim().toLowerCase();
+  if (normalizedReply) {
+    const byLabel = edges.find((edge) => String(asRecord(edge).label || "").trim().toLowerCase() === normalizedReply);
+    if (byLabel) return byLabel;
+    const sourceNode = findFlowNode(flow, sourceNodeId);
+    const buttons = Array.isArray(flowNodeData(sourceNode).buttons) ? flowNodeData(sourceNode).buttons : [];
+    const buttonIndex = buttons.findIndex((button) => String(button || "").trim().toLowerCase() === normalizedReply);
+    if (buttonIndex >= 0) {
+      const handle = `button-${buttonIndex}`;
+      const byHandle = edges.find((edge) => String(asRecord(edge).sourceHandle || "") === handle);
+      if (byHandle) return byHandle;
+    }
+  }
+  return edges[0] || null;
+}
+
+function flowEvent(session, message, type = "info") {
+  return {
+    at: new Date().toISOString(),
+    type,
+    sessionId: session.id,
+    flowId: session.flowId,
+    phone: session.phone,
+    message,
+  };
+}
+
+function outgoingText(text, session) {
+  return String(text || "")
+    .replace(/\{\{\s*nome\s*\}\}/gi, String(session.recipient?.name || ""))
+    .replace(/\{\{\s*telefone\s*\}\}/gi, String(session.phone || ""));
+}
+
+function buildFlowNodePayload(node, session) {
+  const data = flowNodeData(node);
+  const kind = String(data.kind || "text");
+  const body = outgoingText(data.body || data.subtitle || data.title || "", session);
+  const mediaLink = String(data.imageUrl || data.mediaUrl || data.url || "").trim();
+  const caption = outgoingText(data.caption || body, session);
+
+  if (kind === "interactive") {
+    const buttons = (Array.isArray(data.buttons) ? data.buttons : ["CLIQUE AQUI"]).slice(0, 3);
+    return {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: session.phone,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: body || "Escolha uma opcao:" },
+        action: {
+          buttons: buttons.map((button, index) => ({
+            type: "reply",
+            reply: {
+              id: `flow_${String(data.title || "node").replace(/\W+/g, "_").slice(0, 20)}_${index}`,
+              title: String(button || `Opcao ${index + 1}`).slice(0, 20),
+            },
+          })),
+        },
+      },
+    };
+  }
+
+  if (kind === "image" && mediaLink) {
+    return {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: session.phone,
+      type: "image",
+      image: { link: mediaLink, ...(caption ? { caption } : {}) },
+    };
+  }
+
+  if (kind === "video" && mediaLink) {
+    return {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: session.phone,
+      type: "video",
+      video: { link: mediaLink, ...(caption ? { caption } : {}) },
+    };
+  }
+
+  if (kind === "audio" && mediaLink) {
+    return {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: session.phone,
+      type: "audio",
+      audio: { link: mediaLink },
+    };
+  }
+
+  return {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: session.phone,
+    type: "text",
+    text: { preview_url: false, body: body || String(data.title || "Mensagem") },
+  };
+}
+
+async function addToFlowBlacklist(phone) {
+  const key = "movy.blacklist";
+  const stored = await getStoredValue(key);
+  const list = Array.isArray(stored) ? stored : [];
+  const normalized = normalizeBrazilPhone(phone);
+  if (normalized && !list.includes(normalized)) {
+    list.push(normalized);
+    await setStoredValue(key, list);
+  }
+}
+
+async function advanceFlowSession(runtime, session, nextNodeId, reason = "", depth = 0) {
+  if (!nextNodeId || depth > 12) {
+    session.status = "done";
+    session.currentNodeId = nextNodeId || session.currentNodeId;
+    session.updatedAt = new Date().toISOString();
+    runtime.events.push(flowEvent(session, "Fluxo finalizado.", "done"));
+    return;
+  }
+
+  const node = findFlowNode(session.flow, nextNodeId);
+  if (!node) {
+    session.status = "failed";
+    session.updatedAt = new Date().toISOString();
+    runtime.events.push(flowEvent(session, `No ${nextNodeId} nao encontrado.`, "failed"));
+    return;
+  }
+
+  const data = flowNodeData(node);
+  const kind = String(data.kind || "text");
+  session.currentNodeId = String(asRecord(node).id || nextNodeId);
+  session.updatedAt = new Date().toISOString();
+
+  if (kind === "delay") {
+    const delayMs = Math.min(Math.max(Number(data.delayMs || 1000), 0), 120000);
+    runtime.events.push(flowEvent(session, `Delay ${delayMs}ms iniciado${reason ? ` (${reason})` : ""}.`));
+    await sleep(delayMs);
+    const nextEdge = findNextFlowEdge(session.flow, session.currentNodeId);
+    return advanceFlowSession(runtime, session, String(asRecord(nextEdge).target || ""), "delay concluido", depth + 1);
+  }
+
+  if (kind === "blacklist") {
+    await addToFlowBlacklist(session.phone);
+    session.status = "done";
+    runtime.events.push(flowEvent(session, "Contato enviado para blacklist e fluxo finalizado.", "done"));
+    return;
+  }
+
+  try {
+    const payload = buildFlowNodePayload(node, session);
+    const result = await sendCloudMessage(session.phoneNumberId, session.accessToken, payload);
+    session.currentMessageId = result.messageId;
+    session.outboundMessageIds = Array.from(new Set([...(session.outboundMessageIds || []), result.messageId]));
+    runtime.outboundIndex[result.messageId] = session.id;
+    runtime.events.push(flowEvent(session, `${String(data.title || kind)} enviado para ${session.phone}.`, "sent"));
+  } catch (error) {
+    session.status = "failed";
+    runtime.events.push(flowEvent(session, `Falha ao enviar ${String(data.title || kind)}: ${error instanceof Error ? error.message : "erro desconhecido"}`, "failed"));
+    return;
+  }
+
+  const hasButtonWait = kind === "interactive" || (Array.isArray(data.buttons) && data.buttons.length > 0);
+  const nextEdge = findNextFlowEdge(session.flow, session.currentNodeId);
+  if (hasButtonWait) {
+    session.status = "waiting_reply";
+    runtime.events.push(flowEvent(session, `Aguardando resposta em ${String(data.title || kind)}.`));
+    return;
+  }
+
+  if (nextEdge) {
+    return advanceFlowSession(runtime, session, String(asRecord(nextEdge).target || ""), "", depth + 1);
+  }
+
+  session.status = "done";
+  runtime.events.push(flowEvent(session, "Fluxo finalizado.", "done"));
+}
+
+async function registerFlowSession(payload, recipient, lot, messageId) {
+  const flow = asRecord(payload.flow);
+  if (String(payload.mode || "") !== "flow" && !flow.nodes) return null;
+  const phone = normalizeBrazilPhone(recipient.phone || recipient.telefone || recipient.whatsapp);
+  if (!phone || !messageId) return null;
+  const sessionId = `${String(payload.id || "flow")}:${phone}`;
+  const lotSender = asRecord(asRecord(lot).sender);
+  const session = {
+    id: sessionId,
+    broadcastId: String(payload.id || ""),
+    flowId: String(flow.id || payload.id || ""),
+    flowName: String(flow.name || payload.name || "Fluxo"),
+    flow,
+    phone,
+    recipient: {
+      id: recipient.id || "",
+      name: recipient.name || recipient.nome || "",
+      tagId: recipient.tagId || "",
+      tagName: recipient.tagName || "",
+    },
+    currentNodeId: String(flow.startNodeId || "start"),
+    currentMessageId: messageId,
+    outboundMessageIds: [messageId],
+    accessToken: String(recipient.accessToken || lotSender.accessToken || asRecord(payload.sender).accessToken || ""),
+    phoneNumberId: String(recipient.phoneNumberId || lotSender.phoneNumberId || asRecord(payload.sender).phoneNumberId || ""),
+    status: "waiting_reply",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const runtime = await readFlowRuntime();
+  runtime.sessions[sessionId] = session;
+  runtime.outboundIndex[messageId] = sessionId;
+  runtime.phoneIndex[phone] = sessionId;
+  runtime.events.push(flowEvent(session, `Template inicial aceito pela Meta. Aguardando resposta de ${phone}.`, "accepted"));
+  await writeFlowRuntime(runtime);
+  return sessionId;
+}
+
+function normalizeIncomingMessages(payload) {
+  const messages = [];
+  const entries = Array.isArray(payload?.entry) ? payload.entry : [];
+  for (const entry of entries) {
+    const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+    for (const change of changes) {
+      const value = asRecord(change?.value);
+      const rawMessages = Array.isArray(value.messages) ? value.messages : [];
+      for (const message of rawMessages) {
+        const record = asRecord(message);
+        const interactive = asRecord(record.interactive);
+        const buttonReply = asRecord(interactive.button_reply);
+        const listReply = asRecord(interactive.list_reply);
+        const button = asRecord(record.button);
+        const text = asRecord(record.text);
+        const context = asRecord(record.context);
+        messages.push({
+          id: String(record.id || ""),
+          from: normalizeBrazilPhone(record.from || ""),
+          timestamp: Number(record.timestamp || Math.floor(Date.now() / 1000)),
+          contextId: String(context.id || ""),
+          type: String(record.type || ""),
+          text: String(buttonReply.title || listReply.title || button.text || text.body || ""),
+          raw: record,
+        });
+      }
+    }
+  }
+  return messages.filter((message) => message.from || message.contextId);
+}
+
+async function processFlowIncomingMessages(messages) {
+  if (!messages.length) return [];
+  const runtime = await readFlowRuntime();
+  const processed = [];
+  for (const message of messages) {
+    const sessionId = runtime.outboundIndex[message.contextId] || runtime.phoneIndex[message.from];
+    const session = asRecord(runtime.sessions[sessionId]);
+    if (!session.id) continue;
+    if (session.processedInboundIds?.includes(message.id)) continue;
+    session.processedInboundIds = Array.isArray(session.processedInboundIds) ? session.processedInboundIds : [];
+    session.processedInboundIds.push(message.id);
+    session.status = "routing";
+    session.updatedAt = new Date().toISOString();
+    runtime.events.push(flowEvent(session, `Resposta recebida: ${message.text || "(sem texto)"}`, "reply"));
+    const edge = findNextFlowEdge(session.flow, session.currentNodeId, message.text);
+    if (!edge) {
+      session.status = "waiting_reply";
+      runtime.events.push(flowEvent(session, `Nenhuma saida encontrada para "${message.text}".`, "warning"));
+      runtime.sessions[session.id] = session;
+      processed.push({ sessionId: session.id, routed: false, text: message.text });
+      continue;
+    }
+    await advanceFlowSession(runtime, session, String(asRecord(edge).target || ""), `resposta ${message.text}`);
+    runtime.sessions[session.id] = session;
+    processed.push({ sessionId: session.id, routed: true, text: message.text, target: asRecord(edge).target });
+  }
+  await writeFlowRuntime(runtime);
+  return processed;
+}
+
 async function dispatchBroadcast(request, response) {
   try {
     const body = await readRequestBody(request);
@@ -745,12 +1073,14 @@ async function dispatchBroadcast(request, response) {
         debugMessages.push({ phone, debug: debugInfo, payload: cleanMessagePayload });
         if (!messagePayload.template.name) throw new Error("template sem nome");
         const result = await sendCloudMessage(rowPhoneNumberId, rowToken, messagePayload);
+        const flowSessionId = await registerFlowSession(payload, { ...recipientRecord, phone, accessToken: rowToken, phoneNumberId: rowPhoneNumberId }, lot, result.messageId);
         messageIds.push(result.messageId);
         results.push({
           status: "accepted",
           phone,
           id: result.messageId,
           messageId: result.messageId,
+          flowSessionId,
           templateName: messagePayload.template.name,
         });
       } catch (error) {
@@ -999,6 +1329,30 @@ createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "GET" && request.url?.startsWith("/flows/runs")) {
+    try {
+      const url = new URL(request.url || "", `http://${request.headers.host}`);
+      const messageIds = (url.searchParams.get("messageIds") || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const runtime = await readFlowRuntime();
+      const sessionIds = messageIds.length
+        ? Array.from(new Set(messageIds.map((id) => runtime.outboundIndex[id]).filter(Boolean)))
+        : Object.keys(runtime.sessions).slice(-100);
+      const sessions = sessionIds.map((id) => runtime.sessions[id]).filter(Boolean);
+      const eventSessionIds = new Set(sessionIds);
+      const events = (runtime.events || [])
+        .filter((event) => !eventSessionIds.size || eventSessionIds.has(event.sessionId))
+        .slice(-100)
+        .reverse();
+      sendJson(response, 200, { ok: true, sessions, events });
+    } catch (error) {
+      sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : "flow-runtime-read-failed" });
+    }
+    return;
+  }
+
   if (request.method === "GET" && request.url?.startsWith("/broadcast/debug-last")) {
     sendJson(response, 200, { ok: true, debug: lastBroadcastDebug });
     return;
@@ -1084,16 +1438,24 @@ createServer(async (request, response) => {
       const body = await readRequestBody(request);
       const payload = JSON.parse(body.toString("utf8") || "{}");
       const statuses = collectWhatsAppStatuses(payload);
+      const incomingMessages = normalizeIncomingMessages(payload);
+      const flowRoutes = await processFlowIncomingMessages(incomingMessages);
       if (statuses.length) {
         console.log(
           `Webhook Meta recebeu ${statuses.length} status: ${statuses
             .map((item) => `${item.id}:${item.status}${item.errorCode ? `:${item.errorCode}` : ""}`)
             .join(", ")}`,
         );
+      } else if (flowRoutes.length) {
+        console.log(
+          `Webhook Meta roteou ${flowRoutes.length} resposta(s) de fluxo: ${flowRoutes
+            .map((item) => `${item.sessionId}:${item.routed ? "ok" : "sem-rota"}`)
+            .join(", ")}`,
+        );
       } else {
         console.log("Webhook Meta recebeu evento sem status de mensagem.");
       }
-      sendJson(response, 200, { ok: true, received: statuses.length, statuses });
+      sendJson(response, 200, { ok: true, received: statuses.length + incomingMessages.length, statuses, messages: incomingMessages.length, flowRoutes });
     } catch (error) {
       sendJson(response, 400, { ok: false, error: error instanceof Error ? error.message : "invalid-webhook-payload" });
     }

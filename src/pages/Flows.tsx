@@ -80,6 +80,22 @@ type FlowMessageStatus = {
   errorMessage?: string;
 };
 
+type FlowRuntimeEvent = {
+  at?: string;
+  type?: string;
+  sessionId?: string;
+  phone?: string;
+  message?: string;
+};
+
+type FlowRuntimeSession = {
+  id?: string;
+  status?: string;
+  phone?: string;
+  currentNodeId?: string;
+  currentMessageId?: string;
+};
+
 type FlowRecipient = ContactItem & {
   phone: string;
   tagId: string;
@@ -733,6 +749,17 @@ async function fetchLocalMessageStatuses(messageIds: string[]) {
   return Array.isArray(data.statuses) ? (data.statuses as FlowMessageStatus[]) : [];
 }
 
+async function fetchLocalFlowRuns(messageIds: string[]) {
+  if (!messageIds.length) return { sessions: [] as FlowRuntimeSession[], events: [] as FlowRuntimeEvent[] };
+  const response = await fetch(`${movyBackendUrl()}/flows/runs?messageIds=${encodeURIComponent(messageIds.join(","))}`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `Flow runtime HTTP ${response.status}`);
+  return {
+    sessions: Array.isArray(data.sessions) ? (data.sessions as FlowRuntimeSession[]) : [],
+    events: Array.isArray(data.events) ? (data.events as FlowRuntimeEvent[]) : [],
+  };
+}
+
 function FlowCardNode({ data, selected }: NodeProps<FlowNodeData>) {
   const meta = nodeInfo[data.kind];
   const Icon = meta.icon;
@@ -931,8 +958,11 @@ export function Flows() {
     if (!flowRun.messageIds.length || flowRun.status === "idle" || flowRun.status === "paused") return;
     const timer = window.setInterval(async () => {
       try {
-        const statuses = await fetchLocalMessageStatuses(flowRun.messageIds);
-        if (!statuses.length) return;
+        const [statuses, runtime] = await Promise.all([
+          fetchLocalMessageStatuses(flowRun.messageIds).catch(() => []),
+          fetchLocalFlowRuns(flowRun.messageIds).catch(() => ({ sessions: [], events: [] })),
+        ]);
+        if (!statuses.length && !runtime.events.length && !runtime.sessions.length) return;
         setFlowRun((current) => {
           const statusByMessageId = { ...current.statusByMessageId };
           statuses.forEach((statusItem) => {
@@ -942,15 +972,30 @@ export function Flows() {
           const delivered = values.filter((value) => ["delivered", "read", "sent"].includes(value)).length;
           const failed = values.filter((value) => ["failed", "error", "undeliverable"].includes(value)).length;
           const waiting = Math.max(0, current.sent - delivered - failed);
-          const done = current.sent > 0 && waiting === 0;
+          const runtimeEvents = runtime.events
+            .map((event) => {
+              const time = event.at
+                ? new Date(event.at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                : nowTime();
+              return `${time} - ${event.message || "Evento do fluxo"}`;
+            })
+            .filter(Boolean);
+          const hasRunningSession = runtime.sessions.some((session) =>
+            ["waiting_reply", "routing", "sending"].includes(String(session.status || "")),
+          );
+          const hasFailedSession = runtime.sessions.some((session) => String(session.status || "") === "failed");
+          const runtimeFailed = runtime.sessions.filter((session) => String(session.status || "") === "failed").length;
+          const doneByRuntime = runtime.sessions.length > 0 && !hasRunningSession;
+          const done = doneByRuntime || (current.sent > 0 && waiting === 0);
           const next: FlowRun = {
             ...current,
             delivered,
-            failed,
+            failed: Math.max(failed, runtimeFailed, hasFailedSession ? current.failed : 0),
             waiting,
             statusByMessageId,
             status: done ? "done" : current.status,
-            currentStep: done ? "Fluxo finalizado" : "Aguardando webhook/status da Cloud API",
+            currentStep: done ? "Fluxo finalizado" : hasRunningSession ? "Aguardando resposta ou proximo no" : "Aguardando webhook/status da Cloud API",
+            events: Array.from(new Set([...runtimeEvents, ...current.events])).slice(0, 12),
           };
           localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify(next));
           return next;
