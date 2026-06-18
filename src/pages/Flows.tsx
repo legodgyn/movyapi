@@ -30,14 +30,16 @@ import {
   Search,
   Send,
   Timer,
+  Trash2,
+  Upload,
   Video,
   X,
   Zap,
 } from "lucide-react";
-import { broadcasts, contacts, infobipApis, savedTemplates } from "../lib/services";
+import { broadcasts, contacts, infobipApis, media as mediaService, savedTemplates } from "../lib/services";
 import { config } from "../lib/config";
 import { apiGet, unwrapList } from "../lib/api";
-import type { ContactItem, ContactTag, InfobipApi, SavedTemplate } from "../lib/types";
+import type { ContactItem, ContactTag, InfobipApi, MediaItem, SavedTemplate } from "../lib/types";
 
 type FlowNodeKind = "start" | "text" | "audio" | "video" | "image" | "delay" | "interactive" | "blacklist";
 
@@ -51,9 +53,11 @@ type FlowNodeData = {
   footer?: string;
   imageUrl?: string;
   mediaType?: string;
+  mediaName?: string;
   caption?: string;
   delayMs?: string;
   buttons?: string[];
+  voice?: boolean;
   templateId?: string;
   variables?: string[];
   variableValues?: Record<string, string>;
@@ -135,6 +139,14 @@ type ConnectedSender = {
   connectedAt: string;
 };
 
+type LocalMediaItem = MediaItem & {
+  storagePath?: string;
+  path?: string;
+  publicUrl?: string;
+  originalName?: string;
+  filename?: string;
+};
+
 type MetaMessageTemplate = {
   id?: string;
   name: string;
@@ -180,6 +192,7 @@ const LOCAL_BM_SETTINGS_KEY = "scaleapi.bmSettings";
 const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
 const LOCAL_CONNECTED_SENDERS_KEY = "movy.connectedSenders";
 const LOCAL_META_SENT_TEMPLATES_KEY = "scaleapi.metaSentTemplatesCache";
+const MEDIA_LIBRARY_KEY = "movy.mediaLibrary";
 const GRAPH_API_BASE = "https://graph.facebook.com/v24.0";
 
 const fallbackTemplates: SavedTemplate[] = [
@@ -443,6 +456,126 @@ function movyBackendUrl() {
       ? window.location.origin
       : config.publicAppUrl;
   return `${origin.replace(/\/$/, "")}/${configured.replace(/^\/+|\/+$/g, "")}`;
+}
+
+function absoluteMediaUrl(value?: string) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith("/local-api/")) return `${config.publicAppUrl.replace(/\/$/, "")}${url}`;
+  if (url.startsWith("/media/files/")) return `${movyBackendUrl()}${url}`;
+  if (url.startsWith("/")) return `${movyBackendUrl()}${url}`;
+  return url;
+}
+
+function normalizeMediaLibraryItem(item: LocalMediaItem): LocalMediaItem {
+  const storagePath =
+    item.storagePath ||
+    item.path ||
+    String(item.url || item.public_url || item.publicUrl || "").match(/\/media\/files\/[^?#]+/)?.[0] ||
+    "";
+  const url = absoluteMediaUrl(item.public_url || item.publicUrl || item.url || storagePath);
+  return {
+    ...item,
+    storagePath,
+    url,
+    public_url: url,
+    publicUrl: url,
+  };
+}
+
+function mediaItemUrl(item: LocalMediaItem) {
+  return absoluteMediaUrl(item.public_url || item.publicUrl || item.url || item.storagePath || item.path);
+}
+
+function mediaItemName(item: LocalMediaItem) {
+  return String(item.name || item.file_name || item.originalName || item.filename || mediaItemUrl(item).split("/").pop() || "Midia salva");
+}
+
+function mediaItemKind(item: LocalMediaItem) {
+  const type = String(item.type || "").toLowerCase();
+  const url = mediaItemUrl(item).toLowerCase();
+  if (type.startsWith("image/") || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url)) return "image";
+  if (type.startsWith("video/") || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url)) return "video";
+  if (type.startsWith("audio/") || /\.(mp3|ogg|wav|m4a|aac)(\?|$)/i.test(url)) return "audio";
+  return "document";
+}
+
+function mergeMediaItems(...groups: LocalMediaItem[][]) {
+  const byId = new Map<string, LocalMediaItem>();
+  groups.flat().map(normalizeMediaLibraryItem).forEach((item, index) => {
+    const url = mediaItemUrl(item);
+    if (!url) return;
+    byId.set(String(item.id || url || index), item);
+  });
+  return Array.from(byId.values());
+}
+
+async function readFlowMediaLibrary() {
+  const items: LocalMediaItem[][] = [];
+  await mediaService.normalizedList().then((list) => items.push(list as LocalMediaItem[])).catch(() => null);
+  try {
+    const response = await fetch(`${movyBackendUrl()}/storage/${encodeURIComponent(MEDIA_LIBRARY_KEY)}`);
+    const payload = await response.json().catch(() => ({}));
+    if (Array.isArray(payload.value)) items.push(payload.value as LocalMediaItem[]);
+  } catch {
+    // local API unavailable
+  }
+  try {
+    items.push(JSON.parse(localStorage.getItem(MEDIA_LIBRARY_KEY) || "[]") as LocalMediaItem[]);
+  } catch {
+    // optional local library
+  }
+  return mergeMediaItems(...items).sort((a, b) => String(mediaItemName(a)).localeCompare(mediaItemName(b)));
+}
+
+async function writeFlowMediaLibrary(value: LocalMediaItem[]) {
+  const normalized = mergeMediaItems(value);
+  localStorage.setItem(MEDIA_LIBRARY_KEY, JSON.stringify(normalized));
+  await fetch(`${movyBackendUrl()}/storage/${encodeURIComponent(MEDIA_LIBRARY_KEY)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: normalized }),
+  }).catch(() => null);
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Falha ao ler arquivo."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadFlowMedia(file: File) {
+  const base64 = await readFileAsDataUrl(file);
+  const response = await fetch(`${movyBackendUrl()}/media/upload`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: file.name, contentType: file.type, base64 }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) throw new Error(data.message || data.error || `Upload HTTP ${response.status}`);
+  return normalizeMediaLibraryItem({
+    id: String(data.filename || crypto.randomUUID()),
+    name: file.name,
+    file_name: file.name,
+    type: String(data.type || file.type || ""),
+    size: Number(data.size || file.size || 0),
+    url: absoluteMediaUrl(String(data.path || "")),
+    public_url: absoluteMediaUrl(String(data.path || "")),
+    path: String(data.path || ""),
+    storagePath: String(data.path || ""),
+    created_at: new Date().toISOString(),
+  });
+}
+
+function mediaAcceptForKind(kind: FlowNodeKind) {
+  if (kind === "image") return "image/*";
+  if (kind === "video") return "video/mp4,video/webm,video/quicktime,video/*";
+  if (kind === "audio") return "audio/mpeg,audio/ogg,audio/wav,audio/*";
+  return "*/*";
 }
 
 function accountKey(account: BmSettingsData, fallback = "") {
@@ -1016,6 +1149,8 @@ function FlowCardNode({ data, selected }: NodeProps<FlowNodeData>) {
     : String(data.imageUrl || "");
   const startHasMedia = isStart && Boolean(startImageUrl);
   const startMediaType = String(data.mediaType || "").toLowerCase();
+  const nodeMediaUrl = String(data.imageUrl || "").trim();
+  const nodeMediaName = String(data.mediaName || data.subtitle || "Midia selecionada");
 
   return (
     <div className={`dc-node dc-node-${meta.color} ${selected ? "selected" : ""} ${isStart ? "dc-start-node" : ""}`}>
@@ -1074,7 +1209,22 @@ function FlowCardNode({ data, selected }: NodeProps<FlowNodeData>) {
           <time>12:00</time>
         </div>
       ) : isMedia ? (
-        <div className="dc-media-slot">Adicionar {data.kind === "audio" ? "áudio" : data.kind === "video" ? "vídeo" : "imagem"}</div>
+        <div className={`dc-media-slot ${nodeMediaUrl ? "filled" : ""}`}>
+          {nodeMediaUrl ? (
+            <>
+              {data.kind === "image" ? <img alt="" src={nodeMediaUrl} /> : null}
+              {data.kind === "video" ? <video src={nodeMediaUrl} muted playsInline /> : null}
+              {data.kind === "audio" ? (
+                <span className="dc-media-audio-icon">
+                  <Mic2 size={18} />
+                </span>
+              ) : null}
+              <span>{nodeMediaName}</span>
+            </>
+          ) : (
+            `Adicionar ${data.kind === "audio" ? "audio" : data.kind === "video" ? "video" : "imagem"}`
+          )}
+        </div>
       ) : data.kind === "interactive" ? (
         <div className="dc-interactive-preview">
           <p>{data.body || "Texto do corpo..."}</p>
@@ -1122,6 +1272,8 @@ export function Flows() {
   const [flowSearch, setFlowSearch] = useState("");
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createForm, setCreateForm] = useState({ name: "", senderId: "", templateId: "" });
+  const [mediaLibrary, setMediaLibrary] = useState<LocalMediaItem[]>([]);
+  const [mediaUploadingNodeId, setMediaUploadingNodeId] = useState("");
 
   const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId), [nodes, selectedNodeId]);
   const selectedMeta = selectedNode ? nodeInfo[selectedNode.data.kind] : null;
@@ -1177,6 +1329,11 @@ export function Flows() {
     const sender = senders.find((item) => item.id === flowRun.senderId);
     return templates.filter((template) => templateMatchesSender(template, sender));
   }, [flowRun.senderId, senders, templates]);
+  const selectedMediaItems = useMemo(() => {
+    const kind = selectedNode?.data.kind;
+    if (!kind || !["image", "video", "audio"].includes(kind)) return [];
+    return mediaLibrary.filter((item) => mediaItemKind(item) === kind);
+  }, [mediaLibrary, selectedNode?.data.kind]);
 
   const markFlowDirty = useCallback(() => {
     setFlowDirty(true);
@@ -1269,6 +1426,18 @@ export function Flows() {
 
   useEffect(() => {
     setTags(readLocalContactTags());
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    readFlowMediaLibrary()
+      .then((items) => {
+        if (active) setMediaLibrary(items);
+      })
+      .catch(() => null);
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -1464,6 +1633,75 @@ export function Flows() {
           : node,
       ),
     );
+  }
+
+  async function refreshMediaLibrary() {
+    const items = await readFlowMediaLibrary();
+    setMediaLibrary(items);
+    return items;
+  }
+
+  async function handleNodeMediaUpload(file?: File | null) {
+    if (!selectedNode || !file) return;
+    const kind = selectedNode.data.kind;
+    if (!["image", "video", "audio"].includes(kind)) return;
+    setMediaUploadingNodeId(selectedNode.id);
+    try {
+      const item = await uploadFlowMedia(file);
+      const nextLibrary = mergeMediaItems(mediaLibrary, [item]);
+      setMediaLibrary(nextLibrary);
+      await writeFlowMediaLibrary(nextLibrary);
+      updateSelected({
+        imageUrl: mediaItemUrl(item),
+        mediaType: mediaItemKind(item),
+        mediaName: mediaItemName(item),
+        subtitle: mediaItemName(item),
+      });
+      setStatus(`${mediaItemName(item)} vinculado ao bloco ${selectedNode.data.title}.`);
+    } catch (error) {
+      setStatus(`Falha ao enviar midia: ${error instanceof Error ? error.message : "erro desconhecido"}`);
+    } finally {
+      setMediaUploadingNodeId("");
+    }
+  }
+
+  function selectNodeMedia(item: LocalMediaItem) {
+    if (!selectedNode) return;
+    updateSelected({
+      imageUrl: mediaItemUrl(item),
+      mediaType: mediaItemKind(item),
+      mediaName: mediaItemName(item),
+      subtitle: mediaItemName(item),
+    });
+    setStatus(`${mediaItemName(item)} selecionado para o bloco ${selectedNode.data.title}.`);
+  }
+
+  function clearSelectedMedia() {
+    if (!selectedNode) return;
+    updateSelected({
+      imageUrl: "",
+      mediaType: "",
+      mediaName: "",
+      subtitle: nodeInfo[selectedNode.data.kind].label,
+    });
+  }
+
+  function updateSelectedButton(index: number, value: string) {
+    const buttons = [...(selectedNode?.data.buttons || [])];
+    buttons[index] = value;
+    updateSelected({ buttons });
+  }
+
+  function addSelectedButton() {
+    const buttons = [...(selectedNode?.data.buttons || [])];
+    if (buttons.length >= 3) return;
+    updateSelected({ buttons: [...buttons, `Botao ${buttons.length + 1}`] });
+  }
+
+  function removeSelectedButton(index: number) {
+    const buttons = [...(selectedNode?.data.buttons || [])];
+    buttons.splice(index, 1);
+    updateSelected({ buttons: buttons.length ? buttons : ["CLIQUE AQUI"] });
   }
 
   function removeNodeById(nodeId: string) {
@@ -2225,11 +2463,64 @@ export function Flows() {
               {selectedNode.data.kind === "audio" ? (
                 <div className="grid">
                   <label className="field">
-                    <span>Arquivo de áudio</span>
-                    <button className="button secondary" type="button">Enviar áudio (máx. 16MB)</button>
+                    <span>URL da midia</span>
+                    <input
+                      className="input"
+                      placeholder="Cole uma URL publica ou selecione da biblioteca"
+                      value={selectedNode.data.imageUrl || ""}
+                      onChange={(event) => updateSelected({ imageUrl: event.target.value, mediaType: "audio", subtitle: event.target.value ? "URL personalizada" : "AUDIO" })}
+                    />
                   </label>
+                  <div className="dc-media-actions">
+                    <label className="button secondary dc-file-button">
+                      <Upload size={15} />
+                      {mediaUploadingNodeId === selectedNode.id ? "Enviando..." : "Enviar audio"}
+                      <input
+                        type="file"
+                        accept={mediaAcceptForKind("audio")}
+                        disabled={mediaUploadingNodeId === selectedNode.id}
+                        onChange={(event) => {
+                          void handleNodeMediaUpload(event.target.files?.[0]);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                    <button className="button secondary" type="button" onClick={() => void refreshMediaLibrary()}>
+                      <RefreshCcw size={15} />
+                      Atualizar
+                    </button>
+                    {selectedNode.data.imageUrl ? (
+                      <button className="button secondary danger" type="button" onClick={clearSelectedMedia}>
+                        <Trash2 size={15} />
+                        Remover
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="dc-media-library-panel">
+                    <div className="dc-media-library-head">
+                      <strong>Biblioteca de midias</strong>
+                      <span>{selectedMediaItems.length} arquivo(s)</span>
+                    </div>
+                    <div className="dc-recent-media">
+                      {selectedMediaItems.slice(0, 8).map((item) => {
+                        const url = mediaItemUrl(item);
+                        const name = mediaItemName(item);
+                        const selected = url && url === selectedNode.data.imageUrl;
+                        return (
+                          <button className={`dc-media-option ${selected ? "selected" : ""}`} key={`${item.id}-${url}`} type="button" onClick={() => selectNodeMedia(item)}>
+                            <span className="dc-media-thumb-icon">
+                              <Mic2 size={17} />
+                            </span>
+                            <span>{name}</span>
+                            {selected ? <Check size={15} /> : null}
+                          </button>
+                        );
+                      })}
+                      {!selectedMediaItems.length ? <p className="hint">Nenhum audio na biblioteca.</p> : null}
+                    </div>
+                  </div>
                   <label className="dc-toggle-row">
-                    <input type="checkbox" />
+                    <input type="checkbox" checked={Boolean(selectedNode.data.voice)} onChange={(event) => updateSelected({ voice: event.target.checked })} />
                     <span>Mensagem de voz (PTT)</span>
                   </label>
                 </div>
@@ -2238,12 +2529,63 @@ export function Flows() {
               {selectedNode.data.kind === "video" ? (
                 <div className="grid">
                   <label className="field">
-                    <span>Arquivo de vídeo</span>
-                    <button className="button secondary" type="button">Enviar vídeo (.mp4, máx. 16MB)</button>
+                    <span>URL da midia</span>
+                    <input
+                      className="input"
+                      placeholder="Cole uma URL publica ou selecione da biblioteca"
+                      value={selectedNode.data.imageUrl || ""}
+                      onChange={(event) => updateSelected({ imageUrl: event.target.value, mediaType: "video", subtitle: event.target.value ? "URL personalizada" : "VIDEO" })}
+                    />
                   </label>
+                  <div className="dc-media-actions">
+                    <label className="button secondary dc-file-button">
+                      <Upload size={15} />
+                      {mediaUploadingNodeId === selectedNode.id ? "Enviando..." : "Enviar video"}
+                      <input
+                        type="file"
+                        accept={mediaAcceptForKind("video")}
+                        disabled={mediaUploadingNodeId === selectedNode.id}
+                        onChange={(event) => {
+                          void handleNodeMediaUpload(event.target.files?.[0]);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                    <button className="button secondary" type="button" onClick={() => void refreshMediaLibrary()}>
+                      <RefreshCcw size={15} />
+                      Atualizar
+                    </button>
+                    {selectedNode.data.imageUrl ? (
+                      <button className="button secondary danger" type="button" onClick={clearSelectedMedia}>
+                        <Trash2 size={15} />
+                        Remover
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="dc-media-library-panel">
+                    <div className="dc-media-library-head">
+                      <strong>Biblioteca de midias</strong>
+                      <span>{selectedMediaItems.length} arquivo(s)</span>
+                    </div>
+                    <div className="dc-recent-media">
+                      {selectedMediaItems.slice(0, 8).map((item) => {
+                        const url = mediaItemUrl(item);
+                        const name = mediaItemName(item);
+                        const selected = url && url === selectedNode.data.imageUrl;
+                        return (
+                          <button className={`dc-media-option ${selected ? "selected" : ""}`} key={`${item.id}-${url}`} type="button" onClick={() => selectNodeMedia(item)}>
+                            <video src={url} muted playsInline />
+                            <span>{name}</span>
+                            {selected ? <Check size={15} /> : null}
+                          </button>
+                        );
+                      })}
+                      {!selectedMediaItems.length ? <p className="hint">Nenhum video na biblioteca.</p> : null}
+                    </div>
+                  </div>
                   <label className="field">
                     <span>Legenda opcional</span>
-                    <textarea className="textarea" placeholder="Legenda do vídeo..." value={selectedNode.data.caption || ""} onChange={(event) => updateSelected({ caption: event.target.value })} />
+                    <textarea className="textarea" placeholder="Legenda do video..." value={selectedNode.data.caption || ""} onChange={(event) => updateSelected({ caption: event.target.value })} />
                   </label>
                 </div>
               ) : null}
@@ -2251,16 +2593,59 @@ export function Flows() {
               {selectedNode.data.kind === "image" ? (
                 <div className="grid">
                   <label className="field">
-                    <span>Arquivo de imagem</span>
-                    <button className="button secondary" type="button">Enviar imagem (máx. 16MB)</button>
+                    <span>URL da midia</span>
+                    <input
+                      className="input"
+                      placeholder="Cole uma URL publica ou selecione da biblioteca"
+                      value={selectedNode.data.imageUrl || ""}
+                      onChange={(event) => updateSelected({ imageUrl: event.target.value, mediaType: "image", subtitle: event.target.value ? "URL personalizada" : "IMAGE" })}
+                    />
                   </label>
-                  <div className="dc-recent-media">
-                    {[1, 2, 3].map((item) => (
-                      <div key={item}>
-                        <img alt="" src={`https://picsum.photos/seed/movy-${item}/70/70`} />
-                        <span>WhatsApp Image 2026-0...</span>
-                      </div>
-                    ))}
+                  <div className="dc-media-actions">
+                    <label className="button secondary dc-file-button">
+                      <Upload size={15} />
+                      {mediaUploadingNodeId === selectedNode.id ? "Enviando..." : "Enviar imagem"}
+                      <input
+                        type="file"
+                        accept={mediaAcceptForKind("image")}
+                        disabled={mediaUploadingNodeId === selectedNode.id}
+                        onChange={(event) => {
+                          void handleNodeMediaUpload(event.target.files?.[0]);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                    <button className="button secondary" type="button" onClick={() => void refreshMediaLibrary()}>
+                      <RefreshCcw size={15} />
+                      Atualizar
+                    </button>
+                    {selectedNode.data.imageUrl ? (
+                      <button className="button secondary danger" type="button" onClick={clearSelectedMedia}>
+                        <Trash2 size={15} />
+                        Remover
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="dc-media-library-panel">
+                    <div className="dc-media-library-head">
+                      <strong>Biblioteca de midias</strong>
+                      <span>{selectedMediaItems.length} arquivo(s)</span>
+                    </div>
+                    <div className="dc-recent-media">
+                      {selectedMediaItems.slice(0, 8).map((item) => {
+                        const url = mediaItemUrl(item);
+                        const name = mediaItemName(item);
+                        const selected = url && url === selectedNode.data.imageUrl;
+                        return (
+                          <button className={`dc-media-option ${selected ? "selected" : ""}`} key={`${item.id}-${url}`} type="button" onClick={() => selectNodeMedia(item)}>
+                            <img alt="" src={url} />
+                            <span>{name}</span>
+                            {selected ? <Check size={15} /> : null}
+                          </button>
+                        );
+                      })}
+                      {!selectedMediaItems.length ? <p className="hint">Nenhuma imagem na biblioteca.</p> : null}
+                    </div>
                   </div>
                   <label className="field">
                     <span>Legenda opcional</span>
@@ -2292,11 +2677,24 @@ export function Flows() {
                   </label>
                   <label className="field">
                     <span>Rodapé opcional</span>
-                    <input className="input" placeholder="Texto do rodapé..." />
+                    <input className="input" placeholder="Texto do rodape..." value={selectedNode.data.footer || ""} onChange={(event) => updateSelected({ footer: event.target.value })} />
                   </label>
-                  <div className="dc-quick-replies">
-                    {(selectedNode.data.buttons || ["CLIQUE AQUI"]).map((button) => (
-                      <span key={button}>{button}</span>
+                  <div className="dc-button-editor">
+                    <div className="dc-button-editor-head">
+                      <strong>Botoes de resposta</strong>
+                      <button className="button secondary" type="button" onClick={addSelectedButton} disabled={(selectedNode.data.buttons || []).length >= 3}>
+                        <Plus size={14} />
+                        Adicionar
+                      </button>
+                    </div>
+                    {(selectedNode.data.buttons || ["CLIQUE AQUI"]).map((button, index) => (
+                      <label className="dc-button-editor-row" key={`${index}-${button}`}>
+                        <span>{`Botao ${index + 1}`}</span>
+                        <input className="input" value={button} onChange={(event) => updateSelectedButton(index, event.target.value)} />
+                        <button className="button secondary danger icon-only" type="button" onClick={() => removeSelectedButton(index)} aria-label="Remover botao">
+                          <Trash2 size={14} />
+                        </button>
+                      </label>
                     ))}
                   </div>
                 </div>
