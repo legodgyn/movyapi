@@ -36,7 +36,7 @@ import {
 } from "lucide-react";
 import { broadcasts, contacts, infobipApis, savedTemplates } from "../lib/services";
 import { config } from "../lib/config";
-import { unwrapList } from "../lib/api";
+import { apiGet, unwrapList } from "../lib/api";
 import type { ContactItem, ContactTag, InfobipApi, SavedTemplate } from "../lib/types";
 
 type FlowNodeKind = "start" | "text" | "audio" | "video" | "image" | "delay" | "interactive" | "blacklist";
@@ -134,6 +134,23 @@ type ConnectedSender = {
   connectedAt: string;
 };
 
+type MetaMessageTemplate = {
+  id?: string;
+  name: string;
+  status?: string;
+  language?: string;
+  category?: string;
+  waba_id?: string;
+  bm_id?: string;
+  bm_name?: string;
+  components?: Array<{
+    type?: string;
+    text?: string;
+    format?: string;
+    buttons?: Array<{ type?: string; text?: string; url?: string }>;
+  }>;
+};
+
 type SavedFlowSummary = {
   id: string;
   name: string;
@@ -161,6 +178,8 @@ const LOCAL_FLOW_RUN_KEY = "scaleapi.flowRun";
 const LOCAL_BM_SETTINGS_KEY = "scaleapi.bmSettings";
 const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
 const LOCAL_CONNECTED_SENDERS_KEY = "movy.connectedSenders";
+const LOCAL_META_SENT_TEMPLATES_KEY = "scaleapi.metaSentTemplatesCache";
+const GRAPH_API_BASE = "https://graph.facebook.com/v24.0";
 
 const fallbackTemplates: SavedTemplate[] = [
   {
@@ -578,6 +597,176 @@ function findAccountForSender(sender?: InfobipApi) {
   });
 }
 
+function senderToBmAccount(sender: InfobipApi): BmSettingsData {
+  const wabaId = String(sender.defaultWabaId || sender.wabaId || "").trim();
+  const token = String(sender.accessToken || sender.token || "").trim();
+  return {
+    id: String(sender.bmId || sender.id || wabaId),
+    name: String(sender.businessName || sender.name || sender.label || "BM conectada"),
+    businessName: String(sender.businessName || sender.name || sender.label || "BM conectada"),
+    accessToken: token,
+    defaultWabaId: wabaId,
+    wabaId,
+    defaultPhoneNumberId: String(sender.defaultPhoneNumberId || sender.phoneNumberId || ""),
+    phoneNumberId: String(sender.defaultPhoneNumberId || sender.phoneNumberId || ""),
+    phoneNumber: String(sender.phoneNumber || sender.sender_number || sender.senderNumber || ""),
+    status: String(sender.status || "connected"),
+  };
+}
+
+async function metaGet<T = Record<string, unknown>>(path: string, token: string, params: Record<string, string> = {}) {
+  const url = new URL(`${GRAPH_API_BASE}/${path.replace(/^\//, "")}`);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) url.searchParams.set(key, value);
+  });
+  const response = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const record = data as { error?: { message?: string; error_user_msg?: string }; message?: string };
+    throw new Error(record.error?.error_user_msg || record.error?.message || record.message || `Meta retornou HTTP ${response.status}`);
+  }
+  return data as T;
+}
+
+function metaTemplateToSavedTemplate(template: MetaMessageTemplate, account: BmSettingsData): SavedTemplate {
+  const wabaId = account.defaultWabaId || account.wabaId || "";
+  const body = template.components?.find((component) => String(component.type || "").toUpperCase() === "BODY")?.text || "";
+  const footer = template.components?.find((component) => String(component.type || "").toUpperCase() === "FOOTER")?.text || "";
+  const header = template.components?.find((component) => String(component.type || "").toUpperCase() === "HEADER");
+  const buttons = template.components?.find((component) => String(component.type || "").toUpperCase() === "BUTTONS")?.buttons || [];
+  const mediaType = String(header?.format || "").toLowerCase();
+  return {
+    id: String(template.id || `${wabaId}-${template.name}-${template.language || "default"}`),
+    name: template.name,
+    folder: "Meta",
+    body_text: body,
+    footer_text: footer,
+    buttons,
+    language: template.language,
+    category: template.category,
+    meta_status: String(template.status || ""),
+    status: String(template.status || ""),
+    media_type: mediaType,
+    header_type: mediaType,
+    waba_id: wabaId,
+    bm_id: account.id || wabaId,
+    bm_name: account.name || account.businessName || wabaId || "BM conectada",
+  } as SavedTemplate;
+}
+
+function cachedMetaTemplateToSavedTemplate(template: MetaMessageTemplate): SavedTemplate {
+  const body = template.components?.find((component) => String(component.type || "").toUpperCase() === "BODY")?.text || "";
+  const footer = template.components?.find((component) => String(component.type || "").toUpperCase() === "FOOTER")?.text || "";
+  const header = template.components?.find((component) => String(component.type || "").toUpperCase() === "HEADER");
+  const buttons = template.components?.find((component) => String(component.type || "").toUpperCase() === "BUTTONS")?.buttons || [];
+  const mediaType = String(header?.format || "").toLowerCase();
+  const wabaId = String(template.waba_id || "").trim();
+  return {
+    id: String(template.id || `${wabaId || "meta"}-${template.name}-${template.language || "default"}`),
+    name: template.name,
+    folder: "Meta",
+    body_text: body,
+    footer_text: footer,
+    buttons,
+    language: template.language,
+    category: template.category,
+    meta_status: String(template.status || ""),
+    status: String(template.status || ""),
+    media_type: mediaType,
+    header_type: mediaType,
+    waba_id: wabaId,
+    bm_id: template.bm_id,
+    bm_name: template.bm_name,
+  } as SavedTemplate;
+}
+
+function templateStatus(template: SavedTemplate) {
+  return String(template.meta_status || template.status || "").trim().toUpperCase();
+}
+
+function isMetaTemplate(template: SavedTemplate) {
+  const folder = String(template.folder || "").toLowerCase();
+  return folder === "meta" || Boolean(template.waba_id || template.meta_status);
+}
+
+function isApprovedTemplate(template: SavedTemplate) {
+  const status = templateStatus(template);
+  return status === "APPROVED" || (!status && isMetaTemplate(template));
+}
+
+function templateDedupeKey(template: SavedTemplate) {
+  const wabaId = String(template.waba_id || "").trim();
+  const name = String(template.name || "").trim().toLowerCase();
+  const language = String(template.language || "").trim().toLowerCase();
+  return wabaId ? `waba:${wabaId}:${name}:${language}` : `name:${name}:${language}`;
+}
+
+function dedupeTemplates(items: SavedTemplate[]) {
+  const seen = new Set<string>();
+  return items.filter((template) => {
+    const name = String(template.name || "").trim().toLowerCase();
+    const language = String(template.language || "").trim().toLowerCase();
+    const genericKey = `name:${name}:${language}`;
+    const specificKey = templateDedupeKey(template);
+    if (!name || seen.has(specificKey) || seen.has(genericKey)) return false;
+    seen.add(specificKey);
+    seen.add(genericKey);
+    return true;
+  });
+}
+
+function readCachedMetaTemplates() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LOCAL_META_SENT_TEMPLATES_KEY) || "{}") as { templates?: MetaMessageTemplate[] };
+    const templates = Array.isArray(stored.templates) ? stored.templates : [];
+    return templates.map(cachedMetaTemplateToSavedTemplate).filter(isApprovedTemplate);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchApprovedMetaTemplatesFromBmAccounts(extraAccounts: BmSettingsData[] = []) {
+  const results: SavedTemplate[] = [];
+  const accounts = [...readBmAccounts(), ...extraAccounts].filter((account, index, list) => {
+    const key = accountKey(account, String(index));
+    return list.findIndex((item, itemIndex) => accountKey(item, String(itemIndex)) === key) === index;
+  });
+
+  for (const account of accounts) {
+    const token = account.accessToken?.trim();
+    const wabaId = account.defaultWabaId || account.wabaId || "";
+    if (!token || !wabaId) continue;
+    try {
+      const response = await metaGet<{ data?: MetaMessageTemplate[] }>(`${wabaId}/message_templates`, token, {
+        fields: "id,name,status,language,category,components",
+        limit: "250",
+      });
+      results.push(
+        ...(response.data || [])
+          .map((template) => metaTemplateToSavedTemplate(template, account))
+          .filter(isApprovedTemplate),
+      );
+    } catch {
+      // Fallbacks below keep the screen usable when one BM is temporarily blocked.
+    }
+  }
+
+  return dedupeTemplates(results);
+}
+
+async function fetchBackendMessageTemplates() {
+  const payload = await apiGet<unknown>("/message_templates");
+  return unwrapList<SavedTemplate>(payload)
+    .map((template) => ({
+      ...template,
+      folder: template.folder || "Meta",
+      meta_status: String(template.meta_status || template.status || ""),
+    }))
+    .filter(isApprovedTemplate);
+}
+
 function senderLabel(sender: InfobipApi) {
   return String(sender.name || sender.label || sender.sender_number || sender.senderNumber || sender.id);
 }
@@ -588,6 +777,14 @@ function senderNumber(sender: InfobipApi) {
 
 function senderBusinessLabel(sender: InfobipApi) {
   return String(sender.businessName || sender.label || sender.base_url || "");
+}
+
+function templateMatchesSender(template: SavedTemplate, sender?: InfobipApi) {
+  if (!sender) return true;
+  const templateWaba = String(template.waba_id || "").trim();
+  const senderWaba = String(sender.defaultWabaId || sender.wabaId || "").trim();
+  if (!templateWaba || !senderWaba) return true;
+  return templateWaba === senderWaba;
 }
 
 function contactPhone(contact: ContactItem) {
@@ -877,7 +1074,7 @@ export function Flows() {
   const [edges, setEdges, baseOnEdgesChange] = useEdgesState(stored?.edges || initialEdges);
   const [flowName, setFlowName] = useState(stored?.name || "teste");
   const [selectedNodeId, setSelectedNodeId] = useState(stored?.selectedNodeId || "start");
-  const [templates, setTemplates] = useState<SavedTemplate[]>(fallbackTemplates);
+  const [templates, setTemplates] = useState<SavedTemplate[]>([]);
   const [senders, setSenders] = useState<InfobipApi[]>([]);
   const [currentFlowId, setCurrentFlowId] = useState(stored?.id || "");
   const [nodeMenu, setNodeMenu] = useState<{
@@ -946,6 +1143,14 @@ export function Flows() {
       [item.name, item.senderName, item.templateName, item.stats?.status].join(" ").toLowerCase().includes(query),
     );
   }, [flowList, flowSearch]);
+  const createTemplateOptions = useMemo(() => {
+    const sender = senders.find((item) => item.id === createForm.senderId);
+    return templates.filter((template) => templateMatchesSender(template, sender));
+  }, [createForm.senderId, senders, templates]);
+  const currentSenderTemplates = useMemo(() => {
+    const sender = senders.find((item) => item.id === flowRun.senderId);
+    return templates.filter((template) => templateMatchesSender(template, sender));
+  }, [flowRun.senderId, senders, templates]);
 
   const markFlowDirty = useCallback(() => {
     setFlowDirty(true);
@@ -1006,20 +1211,35 @@ export function Flows() {
   );
 
   useEffect(() => {
-    savedTemplates
-      .normalizedList()
-      .then((items) => {
-        if (items.length) setTemplates(items);
-      })
-      .catch(() => setTemplates(fallbackTemplates));
-  }, []);
-
-  useEffect(() => {
     infobipApis
       .normalizedList()
       .then((items) => setSenders(dedupeSenders([...readBmSenders(), ...items])))
       .catch(() => setSenders(readBmSenders()));
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function loadTemplates() {
+      const senderAccounts = senders.map(senderToBmAccount).filter((account) => account.accessToken && (account.defaultWabaId || account.wabaId));
+      const [directMetaTemplates, savedMetaTemplates, backendTemplates] = await Promise.all([
+        fetchApprovedMetaTemplatesFromBmAccounts(senderAccounts).catch(() => [] as SavedTemplate[]),
+        savedTemplates.normalizedList("Meta").catch(() => [] as SavedTemplate[]),
+        fetchBackendMessageTemplates().catch(() => [] as SavedTemplate[]),
+      ]);
+      const cachedTemplates = readCachedMetaTemplates();
+      const nextTemplates = dedupeTemplates([
+        ...directMetaTemplates,
+        ...savedMetaTemplates.filter(isApprovedTemplate),
+        ...cachedTemplates,
+        ...backendTemplates,
+      ]);
+      if (active) setTemplates(nextTemplates);
+    }
+    void loadTemplates();
+    return () => {
+      active = false;
+    };
+  }, [senders]);
 
   useEffect(() => {
     setTags(readLocalContactTags());
@@ -1029,7 +1249,11 @@ export function Flows() {
     setCreateForm((current) => ({
       ...current,
       senderId: current.senderId || senders[0]?.id || "",
-      templateId: current.templateId || templates[0]?.id || "",
+      templateId: (() => {
+        const sender = senders.find((item) => item.id === (current.senderId || senders[0]?.id || ""));
+        const options = templates.filter((template) => templateMatchesSender(template, sender));
+        return options.some((template) => template.id === current.templateId) ? current.templateId : options[0]?.id || "";
+      })(),
     }));
   }, [senders, templates]);
 
@@ -1129,7 +1353,11 @@ export function Flows() {
       return;
     }
     markFlowDirty();
-    const template = templates.find((item) => item.id === templateId) || fallbackTemplates[0];
+    const template = templates.find((item) => item.id === templateId);
+    if (!template) {
+      setStatus("Template aprovado nao encontrado para esse remetente.");
+      return;
+    }
     const currentStart = nodes.find((node) => node.id === "start");
     const nextData = templateToStartData(template, currentStart?.data.variableValues);
     setNodes((current) =>
@@ -1149,7 +1377,8 @@ export function Flows() {
   function updateTemplateVariable(variable: string, value: string) {
     markFlowDirty();
     const startNode = nodes.find((node) => node.id === "start");
-    const template = templates.find((item) => item.id === startNode?.data.templateId) || fallbackTemplates[0];
+    const template = templates.find((item) => item.id === startNode?.data.templateId);
+    if (!template) return;
     const nextValues = {
       ...(startNode?.data.variableValues || {}),
       [variable]: value,
@@ -1330,10 +1559,13 @@ export function Flows() {
   }
 
   function openCreateFlowModal() {
+    const senderId = senders[0]?.id || "";
+    const sender = senders.find((item) => item.id === senderId);
+    const firstTemplate = templates.find((template) => templateMatchesSender(template, sender));
     setCreateForm({
       name: `Fluxo ${new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`,
-      senderId: senders[0]?.id || "",
-      templateId: templates[0]?.id || "",
+      senderId,
+      templateId: firstTemplate?.id || "",
     });
     setCreateModalOpen(true);
   }
@@ -1762,7 +1994,15 @@ export function Flows() {
               </label>
               <label>
                 Remetente
-                <select value={createForm.senderId} onChange={(event) => setCreateForm({ ...createForm, senderId: event.target.value })}>
+                <select
+                  value={createForm.senderId}
+                  onChange={(event) => {
+                    const senderId = event.target.value;
+                    const sender = senders.find((item) => item.id === senderId);
+                    const firstTemplate = templates.find((template) => templateMatchesSender(template, sender));
+                    setCreateForm({ ...createForm, senderId, templateId: firstTemplate?.id || "" });
+                  }}
+                >
                   <option value="">Selecione o remetente</option>
                   {senders.map((sender) => (
                     <option key={sender.id} value={sender.id}>
@@ -1775,11 +2015,12 @@ export function Flows() {
                 Template inicial
                 <select value={createForm.templateId} onChange={(event) => setCreateForm({ ...createForm, templateId: event.target.value })}>
                   <option value="">Selecione o template</option>
-                  {templates.map((template) => (
+                  {createTemplateOptions.map((template) => (
                     <option key={template.id} value={template.id}>
                       {template.name}
                     </option>
                   ))}
+                  {!createTemplateOptions.length ? <option value="" disabled>Nenhum template aprovado nessa BM</option> : null}
                 </select>
               </label>
               <div className="flow-create-hint">
@@ -1913,11 +2154,12 @@ export function Flows() {
                     <span>Template aprovado</span>
                     <select className="select" value={selectedNode.data.templateId || ""} onChange={(event) => selectTemplate(event.target.value)}>
                       <option value="">Selecione um template</option>
-                      {templates.map((template) => (
+                      {currentSenderTemplates.map((template) => (
                         <option key={template.id} value={template.id}>
                           {template.name}
                         </option>
                       ))}
+                      {!currentSenderTemplates.length ? <option value="" disabled>Nenhum template aprovado nessa BM</option> : null}
                     </select>
                   </label>
                   {(selectedNode.data.variables || []).length ? (
