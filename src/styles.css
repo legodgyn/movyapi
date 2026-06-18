@@ -7601,6 +7601,68 @@ a {
   position: relative;
 }
 
+.dc-flow-phone-preview {
+  background:
+    linear-gradient(180deg, hsl(216 22% 10%), hsl(220 28% 5%));
+  border: 1px solid hsl(272 24% 20% / .86);
+  border-radius: 18px;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / .04),
+    0 14px 28px rgb(0 0 0 / .28);
+  color: white;
+  overflow: visible;
+  padding: 20px 8px 8px;
+  width: 260px;
+}
+
+.dc-flow-phone-preview.text-only {
+  min-height: 270px;
+}
+
+.dc-flow-phone-top {
+  background: hsl(260 20% 4%);
+  border-radius: 0 0 8px 8px;
+  height: 10px;
+  left: 50%;
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  width: 54px;
+  z-index: 4;
+}
+
+.dc-flow-preview-media {
+  background: linear-gradient(135deg, hsl(226 72% 38%), hsl(252 72% 14%));
+  border-radius: 8px 8px 0 0;
+  height: 130px;
+  overflow: hidden;
+  position: relative;
+}
+
+.dc-flow-preview-media img,
+.dc-flow-preview-media video {
+  aspect-ratio: auto;
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.dc-flow-play {
+  align-items: center;
+  background: rgb(255 255 255 / .18);
+  border-radius: 999px;
+  color: white;
+  display: inline-flex;
+  height: 48px;
+  justify-content: center;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 48px;
+}
+
 .dc-whatsapp-card img {
   aspect-ratio: 4 / 3;
   display: block;
@@ -7614,12 +7676,33 @@ a {
   padding: 10px;
 }
 
+.dc-flow-phone-preview .dc-whatsapp-body {
+  background: linear-gradient(180deg, hsl(162 90% 22%), hsl(162 92% 17%));
+  min-height: 118px;
+  padding: 12px 10px 9px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dc-flow-phone-preview .dc-whatsapp-body.rounded {
+  border-radius: 8px 8px 0 0;
+  min-height: 186px;
+}
+
 .dc-whatsapp-body p,
 .dc-whatsapp-body small {
   font-size: 10px;
   font-weight: 800;
   line-height: 1.35;
   margin: 0;
+}
+
+.dc-flow-phone-preview .dc-whatsapp-body p {
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .dc-whatsapp-body small {
@@ -7637,6 +7720,14 @@ a {
   justify-content: center;
   min-height: 30px;
   position: relative;
+}
+
+.dc-flow-phone-preview .dc-reply-row {
+  background: hsl(162 92% 17%);
+  border-top-color: rgb(255 255 255 / .16);
+  color: hsl(186 96% 74%);
+  font-size: 10px;
+  min-height: 30px;
 }
 
 .dc-reply-row i {
@@ -7686,6 +7777,13 @@ a {
   font-size: 9px;
   padding: 0 8px 6px;
   text-align: right;
+}
+
+.dc-flow-phone-preview time {
+  background: hsl(162 92% 17%);
+  border-radius: 0 0 8px 8px;
+  color: hsl(164 30% 80% / .7);
+  padding: 0 9px 8px;
 }
 
 .dc-media-slot,

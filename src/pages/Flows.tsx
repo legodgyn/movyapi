@@ -50,6 +50,7 @@ type FlowNodeData = {
   body?: string;
   footer?: string;
   imageUrl?: string;
+  mediaType?: string;
   caption?: string;
   delayMs?: string;
   buttons?: string[];
@@ -264,12 +265,15 @@ function templateToStartData(template: SavedTemplate, currentValues: Record<stri
     acc[variable] = currentValues[variable] || (variable === "1" ? "Lorrene" : variable === "2" ? "5527999983857" : "");
     return acc;
   }, {});
+  const mediaUrl = String(template.media_url || template.header_url || "").trim();
+  const mediaType = templateMediaType(template);
   return {
     kind: "start",
     title: "Template",
     subtitle: template.name,
     templateId: template.id,
-    imageUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=420&q=80",
+    imageUrl: mediaUrl,
+    mediaType,
     body: applyTemplateValues(templateBody(template), values),
     footer: applyTemplateValues(templateFooter(template), values),
     buttons: templateButtons(template),
@@ -1006,6 +1010,12 @@ function FlowCardNode({ data, selected }: NodeProps<FlowNodeData>) {
   const Icon = meta.icon;
   const isStart = data.kind === "start";
   const isMedia = ["audio", "video", "image"].includes(data.kind);
+  const startLines = (data.body || "").split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const startImageUrl = String(data.imageUrl || "").includes("images.unsplash.com/photo-1494790108377")
+    ? ""
+    : String(data.imageUrl || "");
+  const startHasMedia = isStart && Boolean(startImageUrl);
+  const startMediaType = String(data.mediaType || "").toLowerCase();
 
   return (
     <div className={`dc-node dc-node-${meta.color} ${selected ? "selected" : ""} ${isStart ? "dc-start-node" : ""}`}>
@@ -1025,12 +1035,28 @@ function FlowCardNode({ data, selected }: NodeProps<FlowNodeData>) {
       </div>
 
       {isStart ? (
-        <div className="dc-whatsapp-card">
-          {data.imageUrl ? <img alt="" src={data.imageUrl} /> : null}
-          <div className="dc-whatsapp-body">
-            {(data.body || "").split("\n").filter(Boolean).map((line) => (
-              <p key={line}>{line}</p>
-            ))}
+        <div className={`dc-whatsapp-card dc-flow-phone-preview ${startHasMedia ? "has-media" : "text-only"}`}>
+          <div className="dc-flow-phone-top" />
+          {startHasMedia ? (
+            <div className="dc-flow-preview-media">
+              {startMediaType === "video" ? (
+                <>
+                  <video src={startImageUrl} muted playsInline />
+                  <span className="dc-flow-play"><Play size={20} /></span>
+                </>
+              ) : (
+                <img alt="" src={startImageUrl} />
+              )}
+            </div>
+          ) : null}
+          <div className={`dc-whatsapp-body ${startHasMedia ? "" : "rounded"}`}>
+            {startLines.length ? (
+              startLines.map((line, index) => (
+                <p key={`${line}-${index}`}>{line}</p>
+              ))
+            ) : (
+              <p>Selecione um template aprovado para iniciar o fluxo.</p>
+            )}
             {data.footer ? <small>{data.footer}</small> : null}
           </div>
           {(data.buttons || []).map((button, index) => (
