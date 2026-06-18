@@ -17,13 +17,17 @@ import ReactFlow, {
 import "react-flow-renderer/dist/style.css";
 import {
   ArrowLeft,
+  Check,
   Code2,
   FileText,
   Image,
+  MessageCircle,
   Mic2,
   Play,
   Plus,
+  RefreshCcw,
   Save,
+  Search,
   Send,
   Timer,
   Video,
@@ -130,7 +134,29 @@ type ConnectedSender = {
   connectedAt: string;
 };
 
+type SavedFlowSummary = {
+  id: string;
+  name: string;
+  senderId: string;
+  senderName: string;
+  templateId: string;
+  templateName: string;
+  nodes: Node<FlowNodeData>[];
+  edges: Edge[];
+  selectedNodeId: string;
+  updatedAt: string;
+  stats?: {
+    total: number;
+    sent: number;
+    delivered: number;
+    failed: number;
+    waiting: number;
+    status: FlowRun["status"];
+  };
+};
+
 const LOCAL_FLOW_EDITOR_KEY = "scaleapi.flowEditor";
+const LOCAL_FLOW_LIST_KEY = "scaleapi.flowList";
 const LOCAL_FLOW_RUN_KEY = "scaleapi.flowRun";
 const LOCAL_BM_SETTINGS_KEY = "scaleapi.bmSettings";
 const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
@@ -335,6 +361,24 @@ function readStoredRun(): FlowRun {
   } catch {
     return defaultRun;
   }
+}
+
+function readStoredFlowList(): SavedFlowSummary[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LOCAL_FLOW_LIST_KEY) || "[]");
+    return Array.isArray(stored) ? stored : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredFlowList(flows: SavedFlowSummary[]) {
+  localStorage.setItem(LOCAL_FLOW_LIST_KEY, JSON.stringify(flows.slice(0, 80)));
+}
+
+function formatFlowDate(value: string) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
 function readLocalContactTags(): ContactTag[] {
@@ -835,6 +879,7 @@ export function Flows() {
   const [selectedNodeId, setSelectedNodeId] = useState(stored?.selectedNodeId || "start");
   const [templates, setTemplates] = useState<SavedTemplate[]>(fallbackTemplates);
   const [senders, setSenders] = useState<InfobipApi[]>([]);
+  const [currentFlowId, setCurrentFlowId] = useState(stored?.id || "");
   const [nodeMenu, setNodeMenu] = useState<{
     x: number;
     y: number;
@@ -849,6 +894,11 @@ export function Flows() {
   const [flowDirty, setFlowDirty] = useState(false);
   const [savedFlowAt, setSavedFlowAt] = useState(stored?.updatedAt || "");
   const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [flowView, setFlowView] = useState<"dashboard" | "editor">("dashboard");
+  const [flowList, setFlowList] = useState<SavedFlowSummary[]>(() => readStoredFlowList());
+  const [flowSearch, setFlowSearch] = useState("");
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createForm, setCreateForm] = useState({ name: "", senderId: "", templateId: "" });
 
   const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId), [nodes, selectedNodeId]);
   const selectedMeta = selectedNode ? nodeInfo[selectedNode.data.kind] : null;
@@ -875,6 +925,27 @@ export function Flows() {
   );
   const runPercent = flowRun.total ? Math.min(100, Math.round(((flowRun.delivered + flowRun.failed) / flowRun.total) * 100)) : 0;
   const canOpenBroadcast = Boolean(savedFlowAt) && !flowDirty;
+  const flowTotals = useMemo(
+    () =>
+      flowList.reduce(
+        (acc, item) => {
+          acc.total += item.stats?.total || 0;
+          acc.sent += item.stats?.sent || 0;
+          acc.delivered += item.stats?.delivered || 0;
+          acc.failed += item.stats?.failed || 0;
+          return acc;
+        },
+        { total: 0, sent: 0, delivered: 0, failed: 0 },
+      ),
+    [flowList],
+  );
+  const filteredFlows = useMemo(() => {
+    const query = flowSearch.trim().toLowerCase();
+    if (!query) return flowList;
+    return flowList.filter((item) =>
+      [item.name, item.senderName, item.templateName, item.stats?.status].join(" ").toLowerCase().includes(query),
+    );
+  }, [flowList, flowSearch]);
 
   const markFlowDirty = useCallback(() => {
     setFlowDirty(true);
@@ -953,6 +1024,14 @@ export function Flows() {
   useEffect(() => {
     setTags(readLocalContactTags());
   }, []);
+
+  useEffect(() => {
+    setCreateForm((current) => ({
+      ...current,
+      senderId: current.senderId || senders[0]?.id || "",
+      templateId: current.templateId || templates[0]?.id || "",
+    }));
+  }, [senders, templates]);
 
   useEffect(() => {
     if (!flowRun.messageIds.length || flowRun.status === "idle" || flowRun.status === "paused") return;
@@ -1157,16 +1236,151 @@ export function Flows() {
 
   function saveFlow() {
     const updatedAt = new Date().toISOString();
-    const payload = { name: flowName, nodes, edges, selectedNodeId, updatedAt };
+    const id = currentFlowId || crypto.randomUUID();
+    const startNode = nodes.find((node) => node.id === "start");
+    const sender = senders.find((item) => item.id === flowRun.senderId);
+    const template = templates.find((item) => item.id === startNode?.data.templateId);
+    const payload = { id, name: flowName, nodes, edges, selectedNodeId, updatedAt };
     localStorage.setItem(LOCAL_FLOW_EDITOR_KEY, JSON.stringify(payload));
+    setCurrentFlowId(id);
     setSavedFlowAt(updatedAt);
     setFlowDirty(false);
+    const summary: SavedFlowSummary = {
+      id,
+      name: flowName,
+      senderId: flowRun.senderId,
+      senderName: sender ? senderLabel(sender) : "Remetente nao definido",
+      templateId: String(startNode?.data.templateId || ""),
+      templateName: template?.name || startNode?.data.subtitle || "Template",
+      nodes,
+      edges,
+      selectedNodeId,
+      updatedAt,
+      stats: {
+        total: flowRun.total,
+        sent: flowRun.sent,
+        delivered: flowRun.delivered,
+        failed: flowRun.failed,
+        waiting: flowRun.waiting,
+        status: flowRun.status,
+      },
+    };
+    setFlowList((current) => {
+      const next = [summary, ...current.filter((item) => item.id !== id)];
+      writeStoredFlowList(next);
+      return next;
+    });
     setStatus("Fluxo salvo localmente.");
   }
 
   function updateRun(nextRun: FlowRun) {
     setFlowRun(nextRun);
     localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify(nextRun));
+    if (currentFlowId) {
+      setFlowList((current) => {
+        const next = current.map((item) =>
+          item.id === currentFlowId
+            ? {
+                ...item,
+                stats: {
+                  total: nextRun.total,
+                  sent: nextRun.sent,
+                  delivered: nextRun.delivered,
+                  failed: nextRun.failed,
+                  waiting: nextRun.waiting,
+                  status: nextRun.status,
+                },
+              }
+            : item,
+        );
+        writeStoredFlowList(next);
+        return next;
+      });
+    }
+  }
+
+  function openFlow(flow: SavedFlowSummary) {
+    setCurrentFlowId(flow.id);
+    setFlowName(flow.name);
+    setNodes(flow.nodes || initialNodes);
+    setEdges(flow.edges || initialEdges);
+    setSelectedNodeId(flow.selectedNodeId || "start");
+    setSavedFlowAt(flow.updatedAt);
+    setFlowDirty(false);
+    setFlowRun({
+      ...defaultRun,
+      senderId: flow.senderId,
+      ...(flow.stats
+        ? {
+            total: flow.stats.total,
+            sent: flow.stats.sent,
+            delivered: flow.stats.delivered,
+            failed: flow.stats.failed,
+            waiting: flow.stats.waiting,
+            status: flow.stats.status,
+          }
+        : {}),
+    });
+    localStorage.setItem(
+      LOCAL_FLOW_EDITOR_KEY,
+      JSON.stringify({ id: flow.id, name: flow.name, nodes: flow.nodes, edges: flow.edges, selectedNodeId: flow.selectedNodeId, updatedAt: flow.updatedAt }),
+    );
+    setFlowView("editor");
+    setStatus("Fluxo carregado.");
+  }
+
+  function openCreateFlowModal() {
+    setCreateForm({
+      name: `Fluxo ${new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`,
+      senderId: senders[0]?.id || "",
+      templateId: templates[0]?.id || "",
+    });
+    setCreateModalOpen(true);
+  }
+
+  function createFlowFromForm() {
+    const sender = senders.find((item) => item.id === createForm.senderId);
+    const template = templates.find((item) => item.id === createForm.templateId);
+    if (!sender || !template) {
+      setStatus("Escolha um remetente e um template para criar o fluxo.");
+      return;
+    }
+    const id = crypto.randomUUID();
+    const startData = templateToStartData(template);
+    const nextNodes: Node<FlowNodeData>[] = [
+      {
+        id: "start",
+        type: "flowCard",
+        position: { x: 90, y: 110 },
+        data: startData,
+      },
+    ];
+    const nextEdges: Edge[] = [];
+    setCurrentFlowId(id);
+    setFlowName(createForm.name.trim() || template.name);
+    setNodes(nextNodes);
+    setEdges(nextEdges);
+    setSelectedNodeId("start");
+    setSavedFlowAt("");
+    setFlowDirty(true);
+    setFlowRun({ ...defaultRun, senderId: sender.id });
+    localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify({ ...defaultRun, senderId: sender.id }));
+    setCreateModalOpen(false);
+    setFlowView("editor");
+    setStatus("Fluxo criado. Ajuste as variaveis do template e salve para liberar o disparo.");
+    window.setTimeout(() => rebuildButtonBranches(startData.buttons || []), 0);
+  }
+
+  function deleteFlow(flowId: string) {
+    setFlowList((current) => {
+      const next = current.filter((item) => item.id !== flowId);
+      writeStoredFlowList(next);
+      return next;
+    });
+    if (flowId === currentFlowId) {
+      setCurrentFlowId("");
+      setFlowView("dashboard");
+    }
   }
 
   async function startFlowBroadcast() {
@@ -1426,10 +1640,170 @@ export function Flows() {
 
   const jsonValue = JSON.stringify({ name: flowName, nodes, edges }, null, 2);
 
+  if (flowView === "dashboard") {
+    return (
+      <main className="template-page broadcast-page flow-manager-page">
+        <section className="broadcast-dashboard">
+          <div className="broadcast-dashboard-head">
+            <div>
+              <h1>Flows</h1>
+              <p>Crie jornadas com remetente, template inicial e respostas automaticas por botoes.</p>
+            </div>
+            <div className="broadcast-dashboard-actions">
+              <button className="button secondary" onClick={() => setFlowList(readStoredFlowList())} type="button">
+                <RefreshCcw size={16} />
+                Atualizar
+              </button>
+              <button className="button" onClick={openCreateFlowModal} type="button">
+                <Plus size={16} />
+                Criar fluxo
+              </button>
+            </div>
+          </div>
+
+          <div className="broadcast-summary-grid">
+            <div>
+              <span>Aceitos Meta</span>
+              <strong>{flowTotals.sent.toLocaleString("pt-BR")}</strong>
+            </div>
+            <div>
+              <span>Entregues</span>
+              <strong>{flowTotals.delivered.toLocaleString("pt-BR")}</strong>
+            </div>
+            <div>
+              <span>Falhas</span>
+              <strong>{flowTotals.failed.toLocaleString("pt-BR")}</strong>
+            </div>
+            <div>
+              <span>Fluxos</span>
+              <strong>{flowList.length.toLocaleString("pt-BR")}</strong>
+            </div>
+          </div>
+
+          <section className="broadcast-campaign-panel">
+            <div className="broadcast-list-toolbar">
+              <label className="search-field">
+                <Search size={16} />
+                <input
+                  placeholder="Buscar fluxo por nome, remetente ou template..."
+                  value={flowSearch}
+                  onChange={(event) => setFlowSearch(event.target.value)}
+                />
+              </label>
+              <span>{filteredFlows.length} de {flowList.length} fluxo(s)</span>
+            </div>
+
+            <div className="campaign-table flow-table">
+              <div className="campaign-table-head">
+                <span>Nome</span>
+                <span>Progresso</span>
+                <span>Template</span>
+                <span>Status</span>
+                <span>Atualizado</span>
+                <span>Remetente</span>
+              </div>
+              {filteredFlows.map((flow) => {
+                const stats = flow.stats || { sent: 0, delivered: 0, failed: 0, total: 0, waiting: 0, status: "idle" as FlowRun["status"] };
+                return (
+                  <div className="campaign-row-wrap" key={flow.id}>
+                    <button className="campaign-row" onClick={() => openFlow(flow)} type="button">
+                      <span className="campaign-name">
+                        <MessageCircle size={16} />
+                        <strong>{flow.name}</strong>
+                        <small>{flow.templateName}</small>
+                      </span>
+                      <span className="campaign-progress">
+                        <strong className="success">{stats.delivered.toLocaleString("pt-BR")}</strong>
+                        <strong className="danger">{stats.failed.toLocaleString("pt-BR")}</strong>
+                      </span>
+                      <span>{flow.templateName}</span>
+                      <span className={`campaign-status ${stats.status === "done" ? "done" : stats.status === "sending" ? "sending" : "draft"}`}>
+                        {stats.status === "done" ? "Concluido" : stats.status === "sending" ? "Rodando" : "Rascunho"}
+                      </span>
+                      <span>{formatFlowDate(flow.updatedAt)}</span>
+                      <span>{flow.senderName}</span>
+                    </button>
+                    <div className="campaign-expanded-actions flow-row-actions">
+                      <button className="button secondary compact" onClick={() => openFlow(flow)} type="button">
+                        Editar
+                      </button>
+                      <button className="button danger ghost compact" onClick={() => deleteFlow(flow.id)} type="button">
+                        Excluir
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {!filteredFlows.length ? (
+                <div className="campaign-empty">
+                  <MessageCircle size={20} />
+                  <strong>Nenhum fluxo encontrado</strong>
+                  <span>Crie um fluxo escolhendo remetente e template inicial para abrir o editor.</span>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        </section>
+
+        {createModalOpen ? (
+          <div className="modal-backdrop">
+            <div className="broadcast-campaign-modal flow-create-modal">
+              <button className="icon-button modal-close" onClick={() => setCreateModalOpen(false)} type="button">
+                <X size={16} />
+              </button>
+              <h2>Criar fluxo</h2>
+              <label>
+                Nome do fluxo
+                <input
+                  placeholder="Ex: Recuperacao boleto 24h"
+                  value={createForm.name}
+                  onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })}
+                />
+              </label>
+              <label>
+                Remetente
+                <select value={createForm.senderId} onChange={(event) => setCreateForm({ ...createForm, senderId: event.target.value })}>
+                  <option value="">Selecione o remetente</option>
+                  {senders.map((sender) => (
+                    <option key={sender.id} value={sender.id}>
+                      {senderLabel(sender)} - {senderNumber(sender)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Template inicial
+                <select value={createForm.templateId} onChange={(event) => setCreateForm({ ...createForm, templateId: event.target.value })}>
+                  <option value="">Selecione o template</option>
+                  {templates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flow-create-hint">
+                <Check size={16} />
+                <span>O fluxo vai nascer com as variaveis e saidas de botao do template selecionado.</span>
+              </div>
+              <div className="modal-actions">
+                <button className="button secondary" onClick={() => setCreateModalOpen(false)} type="button">Cancelar</button>
+                <button className="button" onClick={createFlowFromForm} type="button">
+                  <Plus size={16} />
+                  Criar e editar
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </main>
+    );
+  }
+
   return (
     <main className="dc-flow-page">
       <header className="dc-flow-top">
-        <button className="dc-back-button" type="button">
+        <button className="dc-back-button" type="button" onClick={() => setFlowView("dashboard")}>
           <ArrowLeft size={17} />
           Voltar
         </button>

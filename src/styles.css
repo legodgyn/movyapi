@@ -7265,6 +7265,135 @@ a {
   overflow: hidden;
 }
 
+.flow-manager-page {
+  max-width: none;
+  min-height: calc(100vh - 56px);
+  padding: 28px 30px 58px;
+}
+
+.flow-manager-page .broadcast-dashboard {
+  margin: 0 auto;
+  max-width: 1180px;
+  width: 100%;
+}
+
+.flow-manager-page .broadcast-dashboard-head {
+  align-items: end;
+  border-bottom: 1px solid hsl(272 24% 20% / .78);
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+}
+
+.flow-manager-page .broadcast-dashboard-head h1 {
+  font-size: 21px;
+  margin: 0 0 5px;
+}
+
+.flow-manager-page .broadcast-dashboard-head p {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  margin: 0;
+}
+
+.flow-manager-page .broadcast-summary-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.flow-manager-page .broadcast-summary-grid div,
+.flow-manager-page .broadcast-campaign-panel {
+  background:
+    radial-gradient(circle at 72% 18%, hsl(274 54% 18% / .18), transparent 32%),
+    linear-gradient(180deg, hsl(256 24% 8% / .94), hsl(260 28% 5% / .98));
+  border: 1px solid hsl(272 32% 20% / .86);
+  border-radius: 8px;
+}
+
+.flow-manager-page .broadcast-summary-grid div {
+  padding: 11px 12px;
+}
+
+.flow-manager-page .broadcast-summary-grid span {
+  color: hsl(var(--muted-foreground));
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.flow-manager-page .broadcast-summary-grid strong {
+  display: block;
+  font-size: 19px;
+  margin-top: 4px;
+}
+
+.flow-manager-page .broadcast-campaign-panel {
+  padding: 12px;
+}
+
+.flow-table .campaign-table-head,
+.flow-table .campaign-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(220px, 1.3fr) 92px minmax(150px, .95fr) 96px 116px minmax(160px, 1fr);
+}
+
+.flow-table .campaign-table-head {
+  padding-left: 14px;
+}
+
+.flow-table .campaign-row {
+  align-items: center;
+  background: hsl(268 22% 9% / .62);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  min-height: 58px;
+  padding: 0 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.flow-table .campaign-row:hover {
+  border-color: hsl(var(--primary) / .34);
+}
+
+.flow-table .campaign-row-wrap {
+  background: transparent;
+  border-radius: 8px;
+}
+
+.flow-row-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 8px 4px 2px;
+}
+
+.flow-create-modal {
+  max-width: 540px;
+}
+
+.flow-create-hint {
+  align-items: center;
+  background: hsl(148 46% 12% / .42);
+  border: 1px solid hsl(148 48% 32% / .52);
+  border-radius: 8px;
+  color: hsl(148 68% 72%);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
 .dc-flow-top {
   align-items: center;
   background: hsl(var(--md-surface-container-low));
