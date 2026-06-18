@@ -1206,13 +1206,27 @@ function buildDispatchPayload(params: {
   tags: ContactTag[];
   distribution: BroadcastDistributionItem[];
   totalContacts: number;
+  campaign?: BroadcastCampaign;
 }) {
-  const { plan, sender, templates, tags, distribution, totalContacts } = params;
+  const { plan, sender, templates, tags, distribution, totalContacts, campaign } = params;
   return {
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     status: "created",
     channel: "whatsapp_cloud",
+    campaign: campaign
+      ? {
+          id: campaign.id,
+          name: campaign.name,
+          mode: campaign.mode,
+          channel: campaign.channel,
+          createdBy: campaign.createdBy,
+          createdAt: campaign.createdAt,
+        }
+      : null,
+    campaignId: campaign?.id || "",
+    campaignName: campaign?.name || "",
+    createdBy: campaign?.createdBy || "Admin",
     sender: sender
       ? {
           id: sender.id,
@@ -1757,6 +1771,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
       tags: selectedTags,
       distribution,
       totalContacts,
+      campaign: campaigns.find((campaign) => campaign.id === activeCampaignId),
     });
     localStorage.setItem(LOCAL_BROADCAST_PAYLOAD_KEY, JSON.stringify(payload));
     updateRun({
@@ -1804,6 +1819,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
       tags: selectedTags,
       distribution,
       totalContacts,
+      campaign: campaigns.find((campaign) => campaign.id === activeCampaignId),
     }) as Record<string, unknown>;
     const missingCredentials = senderPool.filter((sender) => {
       const account = findAccountForSender(sender);
@@ -2056,6 +2072,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
       tags: selectedTags,
       distribution,
       totalContacts,
+      campaign: campaigns.find((campaign) => campaign.id === activeCampaignId),
     });
     localStorage.setItem(LOCAL_BROADCAST_PAYLOAD_KEY, JSON.stringify(payload));
 

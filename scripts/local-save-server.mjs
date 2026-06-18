@@ -38,6 +38,7 @@ const sms24hBaseUrl = process.env.SMS24H_API_BASE_URL || "https://api.sms24h.org
 const sisbratelBaseUrl = process.env.SISBRATEL_API_BASE_URL || "https://app.sisbratel.com/api/external";
 const whatsappStatuses = new Map();
 const FLOW_RUNTIME_KEY = "movy.flowRuntime";
+const BROADCAST_ANALYTICS_KEY = "movy.broadcastAnalyticsEvents";
 const graphApiBase = "https://graph.facebook.com/v24.0";
 let lastBroadcastDebug = null;
 
@@ -468,6 +469,15 @@ async function setStoredValue(key, value) {
   await writeFileStorage(store);
 }
 
+async function readBroadcastAnalyticsEvents() {
+  const stored = await getStoredValue(BROADCAST_ANALYTICS_KEY);
+  return Array.isArray(stored) ? stored.filter((item) => item && typeof item === "object") : [];
+}
+
+async function writeBroadcastAnalyticsEvents(events) {
+  await setStoredValue(BROADCAST_ANALYTICS_KEY, events.slice(-50000));
+}
+
 function asRecord(value) {
   return value && typeof value === "object" ? value : {};
 }
@@ -482,6 +492,190 @@ function normalizeBrazilPhone(value) {
   if (digits.startsWith("55") && (digits.length === 12 || digits.length === 13)) return digits;
   if (digits.length === 10 || digits.length === 11) return `55${digits}`;
   return digits;
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function senderAnalyticsName(sender, fallback = "") {
+  return firstNonEmpty(sender.name, sender.verifiedName, sender.senderName, sender.phoneNumber, sender.phone, fallback, "Remetente");
+}
+
+function broadcastAnalyticsContext(payload, recipient, lot, phone, messageId = "") {
+  const payloadSender = asRecord(payload.sender);
+  const lotSender = asRecord(asRecord(lot).sender);
+  const template = asRecord(asRecord(lot).template);
+  const audience = asRecord(asRecord(lot).audience);
+  const campaign = asRecord(payload.campaign);
+  const sender = Object.keys(lotSender).length ? lotSender : payloadSender;
+  const createdAt = firstNonEmpty(payload.createdAt, campaign.createdAt, new Date().toISOString());
+  return {
+    id: messageId || `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    messageId,
+    broadcastId: firstNonEmpty(payload.id, campaign.id),
+    campaignId: firstNonEmpty(campaign.id, payload.campaignId),
+    campaignName: firstNonEmpty(campaign.name, payload.campaignName, payload.name, "Campanha sem nome"),
+    mode: firstNonEmpty(payload.mode, campaign.mode, "simple"),
+    channel: firstNonEmpty(payload.channel, campaign.channel, "whatsapp_cloud"),
+    bm: firstNonEmpty(sender.bmName, sender.businessName, sender.bm_name, sender.name, payloadSender.bmName, "BM nao informada"),
+    wabaId: firstNonEmpty(sender.wabaId, sender.waba_id, template.wabaId, payloadSender.wabaId),
+    user: firstNonEmpty(payload.createdBy, campaign.createdBy, payload.user, payload.operator, "Admin"),
+    sender: senderAnalyticsName(sender, recipient.senderName),
+    phone: firstNonEmpty(sender.phoneNumber, sender.phone, sender.senderNumber, recipient.senderPhone),
+    phoneNumberId: firstNonEmpty(recipient.phoneNumberId, sender.phoneNumberId, payload.phoneNumberId),
+    recipient: phone,
+    templateId: firstNonEmpty(recipient.templateId, template.id),
+    templateName: firstNonEmpty(recipient.templateName, template.name),
+    tagId: firstNonEmpty(recipient.tagId, audience.tagId),
+    tagName: firstNonEmpty(recipient.tagName, audience.tagName),
+    lotId: firstNonEmpty(recipient.lotId, lot.id),
+    createdAt,
+    updatedAt: new Date().toISOString(),
+    acceptedAt: "",
+    deliveredAt: "",
+    failedAt: "",
+    readAt: "",
+    status: "queued",
+    errorCode: "",
+    errorMessage: "",
+  };
+}
+
+async function appendBroadcastAnalyticsEvents(nextEvents) {
+  if (!nextEvents.length) return;
+  const current = await readBroadcastAnalyticsEvents();
+  const byId = new Map(current.map((event) => [String(event.messageId || event.id), event]));
+  for (const event of nextEvents) {
+    const key = String(event.messageId || event.id);
+    const previous = byId.get(key) || {};
+    byId.set(key, { ...previous, ...event, updatedAt: new Date().toISOString() });
+  }
+  await writeBroadcastAnalyticsEvents(Array.from(byId.values()));
+}
+
+async function updateBroadcastAnalyticsStatuses(statuses) {
+  if (!statuses.length) return;
+  const current = await readBroadcastAnalyticsEvents();
+  const byId = new Map(current.map((event) => [String(event.messageId || event.id), event]));
+  let changed = false;
+  for (const status of statuses) {
+    const key = String(status.id || "");
+    if (!key) continue;
+    const previous = byId.get(key);
+    if (!previous) continue;
+    const statusValue = String(status.status || "").toLowerCase();
+    const eventTime = status.timestamp ? new Date(Number(status.timestamp) * 1000).toISOString() : new Date().toISOString();
+    byId.set(key, {
+      ...previous,
+      status: statusValue || previous.status,
+      recipient: status.recipientId || previous.recipient,
+      conversationId: status.conversationId || previous.conversationId || "",
+      pricingCategory: status.pricingCategory || previous.pricingCategory || "",
+      errorCode: status.errorCode || previous.errorCode || "",
+      errorMessage: status.errorMessage || status.errorTitle || previous.errorMessage || "",
+      deliveredAt: ["delivered", "read"].includes(statusValue) ? eventTime : previous.deliveredAt || "",
+      readAt: statusValue === "read" ? eventTime : previous.readAt || "",
+      failedAt: statusValue === "failed" ? eventTime : previous.failedAt || "",
+      updatedAt: new Date().toISOString(),
+    });
+    changed = true;
+  }
+  if (changed) await writeBroadcastAnalyticsEvents(Array.from(byId.values()));
+}
+
+function dateFromPeriod(period) {
+  const text = String(period || "").toLowerCase();
+  const now = new Date();
+  if (text.includes("24")) return new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  if (text.includes("7")) return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  if (text.includes("30")) return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  if (text.includes("mes") || text.includes("mês")) return new Date(now.getFullYear(), now.getMonth(), 1);
+  return null;
+}
+
+function inAnalyticsPeriod(event, period) {
+  const start = dateFromPeriod(period);
+  if (!start) return true;
+  const date = new Date(event.createdAt || event.updatedAt || 0);
+  return !Number.isNaN(date.getTime()) && date >= start;
+}
+
+function eventMatches(value, filter, allLabel) {
+  const text = String(filter || "");
+  const normalize = (item) =>
+    String(item || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toLowerCase();
+  return !text || normalize(text) === normalize(allLabel) || String(value || "") === text;
+}
+
+async function analyticsTransmissions(params = {}) {
+  const events = await readBroadcastAnalyticsEvents();
+  const filtered = events.filter((event) =>
+    inAnalyticsPeriod(event, params.period) &&
+    eventMatches(event.bm, params.bm, "Todas as BMs") &&
+    eventMatches(event.user, params.user, "Todos os usuários") &&
+    eventMatches(`${event.sender}${event.phone ? ` - ${event.phone}` : ""}`, params.sender, "Todos os remetentes")
+  );
+  const groups = new Map();
+  for (const event of filtered) {
+    const key = [event.bm, event.wabaId, event.user, event.sender, event.phone].map((value) => String(value || "").toLowerCase()).join("|");
+    const current = groups.get(key) || {
+      key,
+      bm: event.bm || "BM não informada",
+      wabaId: event.wabaId || "",
+      user: event.user || "Admin",
+      sender: event.sender || "Remetente",
+      phone: event.phone || "",
+      sent: 0,
+      accepted: 0,
+      delivered: 0,
+      pending: 0,
+      failed: 0,
+      flows: 0,
+      lots: new Set(),
+      campaigns: new Set(),
+      lastAt: "",
+      messages: [],
+    };
+    const status = String(event.status || "");
+    current.sent += 1;
+    if (["accepted", "sent", "delivered", "read"].includes(status)) current.accepted += 1;
+    if (["delivered", "read"].includes(status)) current.delivered += 1;
+    if (status === "failed") current.failed += 1;
+    if (!["delivered", "read", "failed"].includes(status)) current.pending += 1;
+    if (String(event.mode || "").includes("flow")) current.flows += 1;
+    if (event.lotId) current.lots.add(event.lotId);
+    if (event.campaignName) current.campaigns.add(event.campaignName);
+    current.lastAt = [current.lastAt, event.updatedAt || event.createdAt].filter(Boolean).sort().slice(-1)[0] || "";
+    current.messages.push(event);
+    groups.set(key, current);
+  }
+  const data = Array.from(groups.values()).map((group) => ({
+    ...group,
+    lots: group.lots.size || 1,
+    campaigns: Array.from(group.campaigns),
+    messages: group.messages.slice(-50),
+  }));
+  return {
+    ok: true,
+    data,
+    totals: {
+      sent: filtered.length,
+      accepted: filtered.filter((event) => ["accepted", "sent", "delivered", "read"].includes(String(event.status || ""))).length,
+      delivered: filtered.filter((event) => ["delivered", "read"].includes(String(event.status || ""))).length,
+      failed: filtered.filter((event) => String(event.status || "") === "failed").length,
+      pending: filtered.filter((event) => !["delivered", "read", "failed"].includes(String(event.status || ""))).length,
+    },
+    events: filtered.slice(-500).reverse(),
+  };
 }
 
 function mediaParameterFromTemplate(template) {
@@ -885,6 +1079,38 @@ async function advanceFlowSession(runtime, session, nextNodeId, reason = "", dep
     session.currentMessageId = result.messageId;
     session.outboundMessageIds = Array.from(new Set([...(session.outboundMessageIds || []), result.messageId]));
     runtime.outboundIndex[result.messageId] = session.id;
+    await appendBroadcastAnalyticsEvents([
+      {
+        id: result.messageId,
+        messageId: result.messageId,
+        broadcastId: session.broadcastId || session.flowId || session.id,
+        campaignId: session.flowId || "",
+        campaignName: session.flowName || "Fluxo",
+        mode: "flow",
+        channel: "whatsapp_cloud",
+        bm: "Fluxos",
+        wabaId: "",
+        user: "Admin",
+        sender: session.flowName || "Fluxo",
+        phone: session.phoneNumberId || "",
+        phoneNumberId: session.phoneNumberId || "",
+        recipient: session.phone,
+        templateId: "",
+        templateName: String(data.title || kind),
+        tagId: session.recipient?.tagId || "",
+        tagName: session.recipient?.tagName || "",
+        lotId: session.id,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        acceptedAt: new Date().toISOString(),
+        deliveredAt: "",
+        failedAt: "",
+        readAt: "",
+        status: "accepted",
+        errorCode: "",
+        errorMessage: "",
+      },
+    ]);
     runtime.events.push(flowEvent(session, `${String(data.title || kind)} enviado para ${session.phone}.`, "sent"));
   } catch (error) {
     session.status = "failed";
@@ -1074,6 +1300,7 @@ async function dispatchBroadcast(request, response) {
     const results = [];
     const messageIds = [];
     const debugMessages = [];
+    const analyticsEvents = [];
     for (const recipient of recipientRows) {
       const recipientRecord = asRecord(recipient);
       const phone = normalizeBrazilPhone(recipientRecord.phone || recipientRecord.telefone || recipientRecord.whatsapp);
@@ -1088,10 +1315,22 @@ async function dispatchBroadcast(request, response) {
       const rowToken = String(recipientRecord.accessToken || lotSender.accessToken || token).trim();
       const rowPhoneNumberId = String(recipientRecord.phoneNumberId || lotSender.phoneNumberId || phoneNumberId).trim();
       if (!phone) {
+        analyticsEvents.push({
+          ...broadcastAnalyticsContext(payload, recipientRecord, lot, "", ""),
+          status: "failed",
+          failedAt: new Date().toISOString(),
+          errorMessage: "telefone invalido ou vazio",
+        });
         results.push({ status: "failed", phone, errorMessage: "telefone invalido ou vazio" });
         continue;
       }
       if (!rowToken || !rowPhoneNumberId) {
+        analyticsEvents.push({
+          ...broadcastAnalyticsContext(payload, recipientRecord, lot, phone, ""),
+          status: "failed",
+          failedAt: new Date().toISOString(),
+          errorMessage: "remetente sem token ou Phone Number ID",
+        });
         results.push({ status: "failed", phone, errorMessage: "remetente sem token ou Phone Number ID" });
         continue;
       }
@@ -1105,6 +1344,11 @@ async function dispatchBroadcast(request, response) {
         const result = await sendCloudMessage(rowPhoneNumberId, rowToken, messagePayload);
         const flowSessionId = await registerFlowSession(payload, { ...recipientRecord, phone, accessToken: rowToken, phoneNumberId: rowPhoneNumberId }, lot, result.messageId);
         messageIds.push(result.messageId);
+        analyticsEvents.push({
+          ...broadcastAnalyticsContext(payload, recipientRecord, lot, phone, result.messageId),
+          status: "accepted",
+          acceptedAt: new Date().toISOString(),
+        });
         results.push({
           status: "accepted",
           phone,
@@ -1115,6 +1359,12 @@ async function dispatchBroadcast(request, response) {
         });
       } catch (error) {
         const lastDebug = debugMessages[debugMessages.length - 1];
+        analyticsEvents.push({
+          ...broadcastAnalyticsContext(payload, recipientRecord, lot, phone, ""),
+          status: "failed",
+          failedAt: new Date().toISOString(),
+          errorMessage: error instanceof Error ? error.message : "erro desconhecido da Meta",
+        });
         results.push({
           status: "failed",
           phone,
@@ -1127,6 +1377,7 @@ async function dispatchBroadcast(request, response) {
 
     const accepted = results.filter((item) => item.status === "accepted").length;
     const failed = results.filter((item) => item.status === "failed").length;
+    await appendBroadcastAnalyticsEvents(analyticsEvents);
     lastBroadcastDebug = {
       at: new Date().toISOString(),
       phoneNumberId,
@@ -1359,6 +1610,22 @@ createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "GET" && request.url?.startsWith("/analytics/transmissions")) {
+    try {
+      const url = new URL(request.url || "", `http://${request.headers.host}`);
+      const payload = await analyticsTransmissions({
+        period: url.searchParams.get("period") || "",
+        sender: url.searchParams.get("sender") || "",
+        bm: url.searchParams.get("bm") || "",
+        user: url.searchParams.get("user") || "",
+      });
+      sendJson(response, 200, payload);
+    } catch (error) {
+      sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : "analytics-read-failed" });
+    }
+    return;
+  }
+
   if (request.method === "GET" && request.url?.startsWith("/flows/runs")) {
     try {
       const url = new URL(request.url || "", `http://${request.headers.host}`);
@@ -1468,6 +1735,7 @@ createServer(async (request, response) => {
       const body = await readRequestBody(request);
       const payload = JSON.parse(body.toString("utf8") || "{}");
       const statuses = collectWhatsAppStatuses(payload);
+      await updateBroadcastAnalyticsStatuses(statuses);
       const incomingMessages = normalizeIncomingMessages(payload);
       const flowRoutes = await processFlowIncomingMessages(incomingMessages);
       if (statuses.length) {

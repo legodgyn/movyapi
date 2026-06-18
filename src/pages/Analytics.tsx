@@ -12,7 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { BarChart3, CheckCircle2, Download, Filter, Search, Send, TrendingUp, Workflow, XCircle } from "lucide-react";
-import { analytics, broadcasts } from "../lib/services";
+import { config } from "../lib/config";
 
 type SenderMetric = {
   key: string;
@@ -33,6 +33,29 @@ type SenderMetric = {
 
 const LOCAL_BROADCAST_RUN_KEY = "scaleapi.broadcastRun";
 const LOCAL_BROADCAST_PAYLOAD_KEY = "scaleapi.broadcastLastPayload";
+
+function movyBackendUrl() {
+  const configured = config.mediaBackendUrl || config.localBackendUrl;
+  if (/^https?:\/\//i.test(configured)) return configured.replace(/\/$/, "");
+  const origin =
+    typeof window !== "undefined" && window.location.origin && !window.location.origin.includes("localhost")
+      ? window.location.origin
+      : config.publicAppUrl;
+  return `${origin.replace(/\/$/, "")}/${configured.replace(/^\/+|\/+$/g, "")}`;
+}
+
+async function fetchMovyAnalytics(filters: Record<string, string>) {
+  const url = new URL(`${movyBackendUrl()}/analytics/transmissions`);
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value) url.searchParams.set(key, value);
+  });
+  const response = await fetch(url.toString());
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `Analytics retornou HTTP ${response.status}`);
+  }
+  return payload;
+}
 
 function numberOf(value: unknown) {
   const parsed = Number(String(value ?? "").replace(/[^\d.-]/g, ""));
@@ -111,7 +134,7 @@ function fromAnalyticsItem(item: Record<string, unknown>, index: number): Sender
     failed,
     flows: numberOf(item.flows ?? item.flow_count ?? item.fluxos),
     lots: numberOf(item.lots ?? item.batches ?? item.lotes ?? 1),
-    lastAt: textOf(item, ["createdAt", "created_at", "updatedAt", "updated_at", "startedAt"], ""),
+    lastAt: textOf(item, ["lastAt", "createdAt", "created_at", "updatedAt", "updated_at", "startedAt"], ""),
   };
   metric.key = metricKey(metric);
   return metric;
@@ -243,19 +266,13 @@ export function Analytics() {
     setLoading(true);
     setStatus("Buscando dados reais dos disparos...");
     try {
-      const [analyticsPayload, broadcastRows] = await Promise.all([
-        analytics.transmissions({ period, sender: senderFilter, bm: bmFilter, user: userFilter }).catch(() => null),
-        broadcasts.normalizedList({ period }).catch(() => []),
-      ]);
+      const analyticsPayload = await fetchMovyAnalytics({ period, sender: senderFilter, bm: bmFilter, user: userFilter });
       const analyticsRows = unwrapList(analyticsPayload)
         .filter((item) => inPeriod(item.createdAt ?? item.created_at ?? item.startedAt ?? item.updated_at, period))
         .map(fromAnalyticsItem);
-      const normalizedBroadcasts = broadcastRows
-        .filter((item) => inPeriod(item.createdAt ?? item.created_at ?? item.startedAt ?? item.updated_at, period))
-        .map(fromBroadcastItem);
       const local = localBroadcastMetric();
       const localRows = local && inPeriod(local.lastAt, period) ? [local] : [];
-      const merged = mergeMetrics([...analyticsRows, ...normalizedBroadcasts, ...localRows]);
+      const merged = mergeMetrics([...analyticsRows, ...localRows]);
       setRows(merged);
       setStatus(merged.length ? `${merged.length} grupo(s) de disparo carregado(s).` : "Nenhum disparo real encontrado para os filtros atuais.");
     } catch (error) {
