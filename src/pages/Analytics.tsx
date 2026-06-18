@@ -31,6 +31,17 @@ type SenderMetric = {
   lastAt?: string;
 };
 
+type ReportRow = {
+  id: string;
+  campaignName: string;
+  user: string;
+  totalSent: number;
+  delivered: number;
+  failed: number;
+  phones: string[];
+  createdAt?: string;
+};
+
 const LOCAL_BROADCAST_RUN_KEY = "scaleapi.broadcastRun";
 const LOCAL_BROADCAST_PAYLOAD_KEY = "scaleapi.broadcastLastPayload";
 
@@ -248,12 +259,59 @@ function formatDateTime(value?: string) {
   }).format(date);
 }
 
+function formatDateOnly(value?: string) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+}
+
+function formatTimeOnly(value?: string) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
+}
+
+function csvCell(value: unknown) {
+  const text = Array.isArray(value) ? value.join(" | ") : String(value ?? "");
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function parseReportRows(payload: Record<string, unknown>): ReportRow[] {
+  const reports = Array.isArray(payload.reports) ? payload.reports : [];
+  return reports
+    .filter((item) => item && typeof item === "object")
+    .map((item, index) => {
+      const record = item as Record<string, unknown>;
+      return {
+        id: String(record.id || `${record.campaignName || "report"}-${index}`),
+        campaignName: String(record.campaignName || "Campanha sem nome"),
+        user: String(record.user || "Admin"),
+        totalSent: numberOf(record.totalSent ?? record.sent ?? record.total ?? 0),
+        delivered: numberOf(record.delivered ?? 0),
+        failed: numberOf(record.failed ?? 0),
+        phones: Array.isArray(record.phones) ? record.phones.map((phone) => String(phone)).filter(Boolean) : [],
+        createdAt: String(record.createdAt || ""),
+      };
+    });
+}
+
 function senderDisplay(row: SenderMetric) {
   return row.phone ? `${row.sender} - ${row.phone}` : row.sender;
 }
 
 export function Analytics() {
   const [rows, setRows] = useState<SenderMetric[]>([]);
+  const [reportRows, setReportRows] = useState<ReportRow[]>([]);
   const [query, setQuery] = useState("");
   const [period, setPeriod] = useState("Últimas 24h");
   const [senderFilter, setSenderFilter] = useState("Todos os remetentes");
@@ -270,6 +328,7 @@ export function Analytics() {
       const analyticsRows = unwrapList(analyticsPayload)
         .filter((item) => inPeriod(item.createdAt ?? item.created_at ?? item.startedAt ?? item.updated_at, period))
         .map(fromAnalyticsItem);
+      setReportRows(parseReportRows(analyticsPayload as Record<string, unknown>));
       const local = localBroadcastMetric();
       const localRows = local && inPeriod(local.lastAt, period) ? [local] : [];
       const merged = mergeMetrics([...analyticsRows, ...localRows]);
@@ -277,6 +336,7 @@ export function Analytics() {
       setStatus(merged.length ? `${merged.length} grupo(s) de disparo carregado(s).` : "Nenhum disparo real encontrado para os filtros atuais.");
     } catch (error) {
       setRows([]);
+      setReportRows([]);
       setStatus(error instanceof Error ? error.message : "Não foi possível carregar analytics reais.");
     } finally {
       setLoading(false);
@@ -351,6 +411,36 @@ export function Analytics() {
     URL.revokeObjectURL(url);
   }
 
+  function exportReportCsv() {
+    const header = [
+      "Data",
+      "Hora",
+      "Usuario",
+      "Total Enviado",
+      "Entregues",
+      "Falhas",
+      "Numeros de telefone para quem foi enviado",
+    ];
+    const body = reportRows.map((row) =>
+      [
+        formatDateOnly(row.createdAt),
+        formatTimeOnly(row.createdAt),
+        row.user,
+        row.totalSent,
+        row.delivered,
+        row.failed,
+        row.phones,
+      ].map(csvCell).join(";")
+    );
+    const blob = new Blob([`\uFEFF${header.map(csvCell).join(";")}\n${body.join("\n")}`], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `relatorio-disparos-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <main className="template-page analytics-page">
       <div className="template-heading analytics-heading">
@@ -412,6 +502,53 @@ export function Analytics() {
             <small>{detail}</small>
           </div>
         ))}
+      </section>
+
+      <section className="card analytics-report-card">
+        <div className="analytics-table-header">
+          <div>
+            <h3>
+              <Download size={16} />
+              Relatorios
+            </h3>
+            <p className="hint">Exporte data, hora, usuario, totais e telefones de cada disparo filtrado.</p>
+          </div>
+          <button className="button compact" onClick={exportReportCsv} disabled={!reportRows.length}>
+            <Download size={15} />
+            Exportar relatorio CSV
+          </button>
+        </div>
+        <div className="analytics-report-table">
+          <div className="analytics-report-row head">
+            <span>Data</span>
+            <span>Hora</span>
+            <span>Usuario</span>
+            <span>Total</span>
+            <span>Entregues</span>
+            <span>Falhas</span>
+            <span>Telefones</span>
+          </div>
+          {reportRows.slice(0, 8).map((row) => (
+            <div className="analytics-report-row" key={row.id}>
+              <span>{formatDateOnly(row.createdAt)}</span>
+              <span>{formatTimeOnly(row.createdAt)}</span>
+              <span>{row.user}</span>
+              <span>{compact(row.totalSent)}</span>
+              <span className="success-text">{compact(row.delivered)}</span>
+              <span className="danger-text">{compact(row.failed)}</span>
+              <span>
+                <strong>{row.phones.slice(0, 3).join(", ") || "-"}</strong>
+                {row.phones.length > 3 ? <small>+{row.phones.length - 3} telefone(s)</small> : null}
+              </span>
+            </div>
+          ))}
+          {!reportRows.length ? (
+            <div className="analytics-empty-table">
+              <strong>Nenhum relatorio para exportar.</strong>
+              <span>Execute um disparo ou ajuste os filtros para carregar registros.</span>
+            </div>
+          ) : null}
+        </div>
       </section>
 
       <section className="analytics-chart-grid">

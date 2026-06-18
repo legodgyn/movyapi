@@ -625,6 +625,7 @@ async function analyticsTransmissions(params = {}) {
     eventMatches(`${event.sender}${event.phone ? ` - ${event.phone}` : ""}`, params.sender, "Todos os remetentes")
   );
   const groups = new Map();
+  const reportGroups = new Map();
   for (const event of filtered) {
     const key = [event.bm, event.wabaId, event.user, event.sender, event.phone].map((value) => String(value || "").toLowerCase()).join("|");
     const current = groups.get(key) || {
@@ -657,6 +658,43 @@ async function analyticsTransmissions(params = {}) {
     current.lastAt = [current.lastAt, event.updatedAt || event.createdAt].filter(Boolean).sort().slice(-1)[0] || "";
     current.messages.push(event);
     groups.set(key, current);
+
+    const reportKey = [
+      event.campaignId || event.campaignName || event.broadcastId || "campaign",
+      event.lotId || "lot",
+      event.user || "Admin",
+      event.bm || "",
+      event.sender || "",
+    ].map((value) => String(value || "").toLowerCase()).join("|");
+    const report = reportGroups.get(reportKey) || {
+      id: reportKey,
+      campaignId: event.campaignId || "",
+      campaignName: event.campaignName || "Campanha sem nome",
+      lotId: event.lotId || "",
+      bm: event.bm || "BM nao informada",
+      wabaId: event.wabaId || "",
+      user: event.user || "Admin",
+      sender: event.sender || "Remetente",
+      senderPhone: event.phone || "",
+      createdAt: event.createdAt || event.updatedAt || new Date().toISOString(),
+      totalSent: 0,
+      accepted: 0,
+      delivered: 0,
+      failed: 0,
+      pending: 0,
+      phones: new Set(),
+      errors: [],
+    };
+    const reportStatus = String(event.status || "");
+    report.totalSent += 1;
+    if (["accepted", "sent", "delivered", "read"].includes(reportStatus)) report.accepted += 1;
+    if (["delivered", "read"].includes(reportStatus)) report.delivered += 1;
+    if (reportStatus === "failed") report.failed += 1;
+    if (!["delivered", "read", "failed"].includes(reportStatus)) report.pending += 1;
+    if (event.recipient) report.phones.add(event.recipient);
+    if (event.errorMessage) report.errors.push(event.errorMessage);
+    report.createdAt = [report.createdAt, event.createdAt || event.updatedAt].filter(Boolean).sort()[0] || report.createdAt;
+    reportGroups.set(reportKey, report);
   }
   const data = Array.from(groups.values()).map((group) => ({
     ...group,
@@ -664,6 +702,13 @@ async function analyticsTransmissions(params = {}) {
     campaigns: Array.from(group.campaigns),
     messages: group.messages.slice(-50),
   }));
+  const reports = Array.from(reportGroups.values())
+    .map((report) => ({
+      ...report,
+      phones: Array.from(report.phones),
+      errors: Array.from(new Set(report.errors)).slice(0, 8),
+    }))
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   return {
     ok: true,
     data,
@@ -674,6 +719,7 @@ async function analyticsTransmissions(params = {}) {
       failed: filtered.filter((event) => String(event.status || "") === "failed").length,
       pending: filtered.filter((event) => !["delivered", "read", "failed"].includes(String(event.status || ""))).length,
     },
+    reports,
     events: filtered.slice(-500).reverse(),
   };
 }

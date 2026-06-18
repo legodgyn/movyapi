@@ -6028,6 +6028,55 @@ a {
   color: hsl(var(--primary));
 }
 
+.analytics-report-card {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 18px;
+}
+
+.analytics-report-table {
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.analytics-report-row {
+  align-items: center;
+  border-bottom: 1px solid hsl(var(--border));
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 100px 100px minmax(150px, .8fr) 92px 92px 92px minmax(260px, 1.6fr);
+  min-width: 920px;
+  padding: 12px 14px;
+}
+
+.analytics-report-row:last-child {
+  border-bottom: 0;
+}
+
+.analytics-report-row.head {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.analytics-report-row span {
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+}
+
+.analytics-report-row strong {
+  color: hsl(var(--foreground));
+  font-weight: 800;
+}
+
+.analytics-report-row small {
+  color: hsl(var(--muted-foreground));
+  display: block;
+  margin-top: 4px;
+}
+
 .analytics-chart-grid {
   display: grid;
   gap: 16px;
