@@ -710,16 +710,32 @@ function findFlowNode(flow, nodeId) {
   return flowNodes(flow).find((node) => String(asRecord(node).id || "") === String(nodeId || ""));
 }
 
-function findNextFlowEdge(flow, sourceNodeId, replyText = "") {
+function normalizeFlowReply(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function findNextFlowEdge(flow, sourceNodeId, replyText = "", replyId = "") {
   const edges = flowEdges(flow).filter((edge) => String(asRecord(edge).source || "") === String(sourceNodeId || ""));
   if (!edges.length) return null;
-  const normalizedReply = String(replyText || "").trim().toLowerCase();
-  if (normalizedReply) {
-    const byLabel = edges.find((edge) => String(asRecord(edge).label || "").trim().toLowerCase() === normalizedReply);
+  const replyCandidates = Array.from(new Set([replyText, replyId].map(normalizeFlowReply).filter(Boolean)));
+  if (replyCandidates.length) {
+    const byHandleId = replyCandidates
+      .map((candidate) => candidate.match(/(?:^|[_-])(?:button|btn)[_-]?(\d+)$/i)?.[1] ?? candidate.match(/_(\d+)$/)?.[1])
+      .map((index) => (index === undefined ? -1 : Number(index)))
+      .find((index) => Number.isInteger(index) && index >= 0);
+    if (byHandleId !== undefined && byHandleId >= 0) {
+      const byHandle = edges.find((edge) => String(asRecord(edge).sourceHandle || "") === `button-${byHandleId}`);
+      if (byHandle) return byHandle;
+    }
+    const byLabel = edges.find((edge) => replyCandidates.includes(normalizeFlowReply(asRecord(edge).label)));
     if (byLabel) return byLabel;
     const sourceNode = findFlowNode(flow, sourceNodeId);
     const buttons = Array.isArray(flowNodeData(sourceNode).buttons) ? flowNodeData(sourceNode).buttons : [];
-    const buttonIndex = buttons.findIndex((button) => String(button || "").trim().toLowerCase() === normalizedReply);
+    const buttonIndex = buttons.findIndex((button) => replyCandidates.includes(normalizeFlowReply(button)));
     if (buttonIndex >= 0) {
       const handle = `button-${buttonIndex}`;
       const byHandle = edges.find((edge) => String(asRecord(edge).sourceHandle || "") === handle);
@@ -947,13 +963,16 @@ function normalizeIncomingMessages(payload) {
         const button = asRecord(record.button);
         const text = asRecord(record.text);
         const context = asRecord(record.context);
+        const replyId = String(buttonReply.id || listReply.id || button.payload || button.id || "");
+        const replyText = String(buttonReply.title || listReply.title || button.text || text.body || replyId || "");
         messages.push({
           id: String(record.id || ""),
           from: normalizeBrazilPhone(record.from || ""),
           timestamp: Number(record.timestamp || Math.floor(Date.now() / 1000)),
           contextId: String(context.id || ""),
           type: String(record.type || ""),
-          text: String(buttonReply.title || listReply.title || button.text || text.body || ""),
+          text: replyText,
+          replyId,
           raw: record,
         });
       }
@@ -969,24 +988,35 @@ async function processFlowIncomingMessages(messages) {
   for (const message of messages) {
     const sessionId = runtime.outboundIndex[message.contextId] || runtime.phoneIndex[message.from];
     const session = asRecord(runtime.sessions[sessionId]);
-    if (!session.id) continue;
+    if (!session.id) {
+      runtime.events.push({
+        at: new Date().toISOString(),
+        type: "warning",
+        sessionId: "",
+        flowId: "",
+        phone: message.from,
+        message: `Resposta recebida, mas nenhuma sessao de fluxo foi encontrada. Contexto: ${message.contextId || "-"} | texto: ${message.text || message.replyId || "-"}`,
+      });
+      processed.push({ sessionId: "", routed: false, text: message.text, reason: "session-not-found" });
+      continue;
+    }
     if (session.processedInboundIds?.includes(message.id)) continue;
     session.processedInboundIds = Array.isArray(session.processedInboundIds) ? session.processedInboundIds : [];
     session.processedInboundIds.push(message.id);
     session.status = "routing";
     session.updatedAt = new Date().toISOString();
-    runtime.events.push(flowEvent(session, `Resposta recebida: ${message.text || "(sem texto)"}`, "reply"));
-    const edge = findNextFlowEdge(session.flow, session.currentNodeId, message.text);
+    runtime.events.push(flowEvent(session, `Resposta recebida: ${message.text || message.replyId || "(sem texto)"}`, "reply"));
+    const edge = findNextFlowEdge(session.flow, session.currentNodeId, message.text, message.replyId);
     if (!edge) {
       session.status = "waiting_reply";
-      runtime.events.push(flowEvent(session, `Nenhuma saida encontrada para "${message.text}".`, "warning"));
+      runtime.events.push(flowEvent(session, `Nenhuma saida encontrada para "${message.text || message.replyId}".`, "warning"));
       runtime.sessions[session.id] = session;
-      processed.push({ sessionId: session.id, routed: false, text: message.text });
+      processed.push({ sessionId: session.id, routed: false, text: message.text, replyId: message.replyId });
       continue;
     }
-    await advanceFlowSession(runtime, session, String(asRecord(edge).target || ""), `resposta ${message.text}`);
+    await advanceFlowSession(runtime, session, String(asRecord(edge).target || ""), `resposta ${message.text || message.replyId}`);
     runtime.sessions[session.id] = session;
-    processed.push({ sessionId: session.id, routed: true, text: message.text, target: asRecord(edge).target });
+    processed.push({ sessionId: session.id, routed: true, text: message.text, replyId: message.replyId, target: asRecord(edge).target });
   }
   await writeFlowRuntime(runtime);
   return processed;
