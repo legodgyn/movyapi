@@ -6529,6 +6529,30 @@ a {
   font-weight: 800;
 }
 
+.conversation-window-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.conversation-window-pill.open {
+  border-color: hsl(152 70% 45% / .34);
+  color: hsl(152 80% 68%);
+  background: hsl(152 45% 18% / .28);
+}
+
+.conversation-window-pill.closed {
+  border-color: hsl(42 85% 58% / .36);
+  color: hsl(42 95% 74%);
+  background: hsl(42 44% 18% / .25);
+}
+
 .conversation-status-pill.delivered,
 .conversation-status-pill.read,
 .conversation-status-pill.received {

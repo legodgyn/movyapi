@@ -37,6 +37,7 @@ const checkNumberBaseUrl = "https://api.checknumber.ai/v1";
 const sms24hBaseUrl = process.env.SMS24H_API_BASE_URL || "https://api.sms24h.org/stubs/handler_api";
 const sisbratelBaseUrl = process.env.SISBRATEL_API_BASE_URL || "https://app.sisbratel.com/api/external";
 const whatsappStatuses = new Map();
+const WHATSAPP_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const FLOW_RUNTIME_KEY = "movy.flowRuntime";
 const BROADCAST_ANALYTICS_KEY = "movy.broadcastAnalyticsEvents";
 const CONVERSATION_MESSAGES_KEY = "movy.conversationMessages";
@@ -747,13 +748,22 @@ function conversationFromMessages(messages) {
       lastMessage: "",
       lastStatus: "",
       lastAt: "",
+      lastInboundAt: "",
+      canReplyUntil: "",
+      replyWindowOpen: false,
       unread: 0,
       messages: [],
     };
     current.senderPhone = current.senderPhone || message.senderPhone || "";
     current.senderName = current.senderName || message.senderName || "Remetente";
     current.messages.push(message);
-    if (message.direction === "inbound" && !message.readByAgentAt) current.unread += 1;
+    if (message.direction === "inbound") {
+      if (!message.readByAgentAt) current.unread += 1;
+      const inboundAt = message.createdAt || message.updatedAt || "";
+      if (inboundAt && (!current.lastInboundAt || new Date(inboundAt).getTime() >= new Date(current.lastInboundAt).getTime())) {
+        current.lastInboundAt = inboundAt;
+      }
+    }
     const when = message.createdAt || message.updatedAt || "";
     if (!current.lastAt || new Date(when).getTime() >= new Date(current.lastAt).getTime()) {
       current.lastAt = when;
@@ -765,9 +775,31 @@ function conversationFromMessages(messages) {
   return Array.from(byConversation.values())
     .map((conversation) => ({
       ...conversation,
+      canReplyUntil: conversation.lastInboundAt ? new Date(new Date(conversation.lastInboundAt).getTime() + WHATSAPP_REPLY_WINDOW_MS).toISOString() : "",
+      replyWindowOpen: conversation.lastInboundAt ? Date.now() - new Date(conversation.lastInboundAt).getTime() <= WHATSAPP_REPLY_WINDOW_MS : false,
       messages: conversation.messages.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()),
     }))
     .sort((a, b) => new Date(b.lastAt || 0).getTime() - new Date(a.lastAt || 0).getTime());
+}
+
+async function canReplyWithFreeText(contactPhone, phoneNumberId) {
+  const contact = normalizeBrazilPhone(contactPhone || "");
+  const senderId = String(phoneNumberId || "");
+  if (!contact || !senderId) return { ok: false, lastInboundAt: "", canReplyUntil: "" };
+  const messages = await readConversationMessages();
+  const inbound = messages
+    .filter((message) => {
+      const messageContact = normalizeBrazilPhone(message.contactPhone || message.from || "");
+      return message.direction === "inbound" && messageContact === contact && String(message.senderPhoneNumberId || message.phoneNumberId || "") === senderId;
+    })
+    .sort((a, b) => new Date(b.createdAt || b.updatedAt || 0).getTime() - new Date(a.createdAt || a.updatedAt || 0).getTime())[0];
+  const lastInboundAt = inbound?.createdAt || inbound?.updatedAt || "";
+  const canReplyUntil = lastInboundAt ? new Date(new Date(lastInboundAt).getTime() + WHATSAPP_REPLY_WINDOW_MS).toISOString() : "";
+  return {
+    ok: Boolean(lastInboundAt && Date.now() <= new Date(canReplyUntil).getTime()),
+    lastInboundAt,
+    canReplyUntil,
+  };
 }
 
 async function listConversations(params = {}) {
@@ -880,6 +912,17 @@ async function handleConversations(request, response) {
     const phoneNumberId = String(body.phoneNumberId || body.senderPhoneNumberId || "").trim();
     if (!to || !text || !phoneNumberId) {
       sendJson(response, 400, { ok: false, error: "missing-message-fields", message: "Informe remetente, contato e texto." });
+      return true;
+    }
+    const replyWindow = await canReplyWithFreeText(to, phoneNumberId);
+    if (!replyWindow.ok) {
+      sendJson(response, 400, {
+        ok: false,
+        error: "reply-window-closed",
+        message: "Essa conversa esta fora da janela de 24h. Envie um template aprovado para reabrir a conversa.",
+        lastInboundAt: replyWindow.lastInboundAt,
+        canReplyUntil: replyWindow.canReplyUntil,
+      });
       return true;
     }
     const credentials = await findSenderCredentials(phoneNumberId);

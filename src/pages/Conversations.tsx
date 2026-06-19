@@ -40,6 +40,9 @@ type Conversation = {
   lastMessage?: string;
   lastStatus?: string;
   lastAt?: string;
+  lastInboundAt?: string;
+  canReplyUntil?: string;
+  replyWindowOpen?: boolean;
   unread?: number;
   messages: ConversationMessage[];
 };
@@ -59,6 +62,14 @@ function movyBackendUrl() {
   return apiUrl;
 }
 
+function productionBackendUrl() {
+  return "https://movyapi.com.br/local-api";
+}
+
+function isLocalHost() {
+  return typeof window !== "undefined" && /localhost|127\.0\.0\.1/.test(window.location.hostname);
+}
+
 function formatTime(value?: string) {
   if (!value) return "";
   const date = new Date(value);
@@ -69,6 +80,16 @@ function formatTime(value?: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function hoursUntil(value?: string) {
+  if (!value) return "";
+  const diff = new Date(value).getTime() - Date.now();
+  if (diff <= 0) return "";
+  const hours = Math.floor(diff / 3600000);
+  const minutes = Math.max(0, Math.ceil((diff % 3600000) / 60000));
+  if (hours <= 0) return `${minutes}min`;
+  return `${hours}h ${minutes}min`;
 }
 
 function phoneMask(value?: string) {
@@ -184,6 +205,7 @@ export function Conversations() {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState("");
+  const [conversationBackendUrl, setConversationBackendUrl] = useState(movyBackendUrl());
 
   const selected = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedId) || conversations[0],
@@ -200,19 +222,38 @@ export function Conversations() {
     const failed = messages.filter((message) => String(message.status || "").toLowerCase() === "failed").length;
     return { inbound, outbound, failed };
   }, [conversations]);
+  const windowRemaining = hoursUntil(selected?.canReplyUntil);
 
   async function loadConversations(silent = false) {
     if (!silent) setLoading(true);
     try {
-      const url = new URL(`${movyBackendUrl()}/conversations`);
+      const primaryBackendUrl = movyBackendUrl();
+      const url = new URL(`${primaryBackendUrl}/conversations`);
       if (query.trim()) url.searchParams.set("q", query.trim());
       if (senderFilter !== "all") url.searchParams.set("sender", senderFilter);
       const response = await fetch(url);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `Conversas HTTP ${response.status}`);
-      const next = Array.isArray(payload.conversations) ? payload.conversations : [];
+      let activeBackendUrl = primaryBackendUrl;
+      let nextPayload = payload;
+      let next = Array.isArray(nextPayload.conversations) ? nextPayload.conversations : [];
+      let nextSenders = mergeSenderOptions(nextPayload.senders);
+      if (isLocalHost() && !next.length) {
+        const fallbackUrl = new URL(`${productionBackendUrl()}/conversations`);
+        if (query.trim()) fallbackUrl.searchParams.set("q", query.trim());
+        if (senderFilter !== "all") fallbackUrl.searchParams.set("sender", senderFilter);
+        const fallbackResponse = await fetch(fallbackUrl);
+        const fallbackPayload = await fallbackResponse.json().catch(() => ({}));
+        if (fallbackResponse.ok) {
+          activeBackendUrl = productionBackendUrl();
+          nextPayload = fallbackPayload;
+          next = Array.isArray(nextPayload.conversations) ? nextPayload.conversations : [];
+          nextSenders = mergeSenderOptions(nextPayload.senders);
+        }
+      }
+      setConversationBackendUrl(activeBackendUrl);
       setConversations(next);
-      setSenders(mergeSenderOptions(payload.senders));
+      setSenders(nextSenders);
       setSelectedId((current) => (current && next.some((item: Conversation) => item.id === current) ? current : next[0]?.id || ""));
       setStatus(next.length ? "" : "Nenhuma conversa encontrada ainda. As novas mensagens chegam aqui pelo webhook.");
     } catch (error) {
@@ -224,9 +265,13 @@ export function Conversations() {
 
   async function sendMessage() {
     if (!selected || !draft.trim() || sending) return;
+    if (!selected.replyWindowOpen) {
+      setStatus("Essa conversa esta fora da janela de 24h. Para reabrir, envie um template aprovado pelo Broadcast.");
+      return;
+    }
     setSending(true);
     try {
-      const response = await fetch(`${movyBackendUrl()}/conversations/send`, {
+      const response = await fetch(`${conversationBackendUrl}/conversations/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -360,6 +405,9 @@ export function Conversations() {
                   </div>
                 </div>
                 <div className="conversation-head-actions">
+                  <span className={`conversation-window-pill ${selected.replyWindowOpen ? "open" : "closed"}`}>
+                    {selected.replyWindowOpen ? `Janela 24h ativa${windowRemaining ? ` - ${windowRemaining}` : ""}` : "Fora da janela 24h"}
+                  </span>
                   <span className={`conversation-status-pill ${String(selected.lastStatus || "").toLowerCase()}`}>
                     {statusLabel(selected.lastStatus)}
                   </span>
@@ -405,7 +453,7 @@ export function Conversations() {
                 </button>
                 <button className="button" type="button" onClick={sendMessage} disabled={!draft.trim() || sending}>
                   <Send size={16} />
-                  Enviar
+                  {selected.replyWindowOpen ? "Enviar" : "Usar template"}
                 </button>
               </footer>
             </>
@@ -442,6 +490,10 @@ export function Conversations() {
               <div>
                 <dt>Status</dt>
                 <dd>{statusLabel(selected?.lastStatus)}</dd>
+              </div>
+              <div>
+                <dt>Janela 24h</dt>
+                <dd>{selected?.replyWindowOpen ? `Aberta ${windowRemaining ? `(${windowRemaining})` : ""}` : "Fechada"}</dd>
               </div>
             </dl>
           </div>
