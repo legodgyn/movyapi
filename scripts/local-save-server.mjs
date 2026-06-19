@@ -916,8 +916,11 @@ async function handleConversations(request, response) {
     const body = JSON.parse((await readRequestBody(request)).toString("utf8") || "{}");
     const to = normalizeBrazilPhone(body.to || body.contactPhone || "");
     const text = String(body.text || "").trim();
+    const mediaUrl = String(body.mediaUrl || body.url || "").trim();
+    const mediaTypeRaw = String(body.mediaType || body.type || "").toLowerCase();
+    const mediaName = String(body.mediaName || body.filename || "arquivo").trim();
     const phoneNumberId = String(body.phoneNumberId || body.senderPhoneNumberId || "").trim();
-    if (!to || !text || !phoneNumberId) {
+    if (!to || (!text && !mediaUrl) || !phoneNumberId) {
       sendJson(response, 400, { ok: false, error: "missing-message-fields", message: "Informe remetente, contato e texto." });
       return true;
     }
@@ -937,12 +940,35 @@ async function handleConversations(request, response) {
       sendJson(response, 400, { ok: false, error: "missing-sender-token", message: "Nao encontrei token da BM para esse remetente." });
       return true;
     }
-    const payload = {
+    const normalizedText = normalizeTemplateParameterText(text);
+    const mediaKind = mediaUrl
+      ? mediaTypeRaw.includes("video")
+        ? "video"
+        : mediaTypeRaw.includes("audio")
+          ? "audio"
+          : mediaTypeRaw.includes("image")
+            ? "image"
+            : "document"
+      : "text";
+    const payload = mediaUrl
+      ? {
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to,
+          type: mediaKind,
+          [mediaKind]:
+            mediaKind === "document"
+              ? { link: mediaUrl, filename: mediaName, ...(normalizedText ? { caption: normalizedText } : {}) }
+              : mediaKind === "audio"
+                ? { link: mediaUrl }
+                : { link: mediaUrl, ...(normalizedText ? { caption: normalizedText } : {}) },
+        }
+      : {
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to,
       type: "text",
-      text: { preview_url: false, body: normalizeTemplateParameterText(text) },
+      text: { preview_url: false, body: normalizedText },
     };
     const result = await sendCloudMessage(phoneNumberId, credentials.accessToken, payload);
     const createdAt = new Date().toISOString();
@@ -958,8 +984,8 @@ async function handleConversations(request, response) {
         senderPhoneNumberId: phoneNumberId,
         senderPhone: credentials.senderPhone,
         senderName: credentials.senderName,
-        text: normalizeTemplateParameterText(text),
-        type: "text",
+        text: normalizedText || mediaName,
+        type: mediaKind,
         status: "accepted",
         createdAt,
         updatedAt: createdAt,

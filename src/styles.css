@@ -6242,8 +6242,8 @@ a {
 .conversations-page {
   display: grid;
   min-height: calc(100vh - 72px);
-  padding: 18px clamp(18px, 2.5vw, 34px) 22px;
-  gap: 14px;
+  padding: 12px clamp(12px, 1.4vw, 22px) 14px;
+  gap: 0;
 }
 
 .conversations-heading {
@@ -6287,11 +6287,11 @@ a {
 
 .conversations-shell {
   display: grid;
-  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(260px, 320px);
-  width: min(1480px, 100%);
-  min-height: min(760px, calc(100vh - 230px));
-  height: calc(100vh - 230px);
-  margin: 0 auto;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr) minmax(270px, 340px);
+  width: 100%;
+  min-height: calc(100vh - 104px);
+  height: calc(100vh - 104px);
+  margin: 0;
   overflow: hidden;
   border: 1px solid hsl(var(--border));
   border-radius: 8px;
@@ -6648,6 +6648,91 @@ a {
   background: hsl(var(--surface-container-low) / .36);
 }
 
+.conversation-attach-button {
+  cursor: pointer;
+}
+
+.conversation-attach-button input {
+  display: none;
+}
+
+.conversation-compose-box {
+  display: grid;
+  gap: 7px;
+}
+
+.conversation-attachment-chip {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, max-content) auto;
+  align-items: center;
+  justify-self: start;
+  max-width: min(420px, 100%);
+  gap: 7px;
+  padding: 6px 8px;
+  border: 1px solid hsl(var(--md-primary) / .3);
+  border-radius: 999px;
+  color: hsl(var(--md-primary));
+  background: hsl(var(--md-primary-container) / .28);
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+.conversation-attachment-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-attachment-chip button {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--surface-container-high));
+  cursor: pointer;
+  font-size: .78rem;
+  line-height: 1;
+}
+
+.conversation-emoji-wrap {
+  position: relative;
+}
+
+.conversation-emoji-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 10;
+  display: grid;
+  grid-template-columns: repeat(6, 30px);
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  box-shadow: 0 18px 40px hsl(270 60% 5% / .45);
+}
+
+.conversation-emoji-menu button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.conversation-emoji-menu button:hover {
+  border-color: hsl(var(--md-primary) / .36);
+  background: hsl(var(--md-primary-container) / .28);
+}
+
 .conversation-composer textarea {
   min-height: 44px;
   max-height: 120px;
@@ -6787,7 +6872,7 @@ a {
 
 @media (max-width: 1280px) {
   .conversations-shell {
-    grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
   }
 
   .conversation-detail-panel {
@@ -6797,7 +6882,7 @@ a {
 
 @media (max-width: 860px) {
   .conversations-page {
-    padding-inline: 12px;
+    padding-inline: 10px;
   }
 
   .conversation-metric-row {

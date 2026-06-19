@@ -227,6 +227,8 @@ export function Conversations() {
   const [query, setQuery] = useState("");
   const [senderFilter, setSenderFilter] = useState("all");
   const [draft, setDraft] = useState("");
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState("");
@@ -240,13 +242,6 @@ export function Conversations() {
     () => [...(selected?.messages || [])].sort((a, b) => new Date(a.createdAt || "").getTime() - new Date(b.createdAt || "").getTime()),
     [selected],
   );
-  const metrics = useMemo(() => {
-    const messages = conversations.flatMap((conversation) => conversation.messages || []);
-    const inbound = messages.filter((message) => message.direction === "inbound").length;
-    const outbound = messages.filter((message) => message.direction === "outbound").length;
-    const failed = messages.filter((message) => String(message.status || "").toLowerCase() === "failed").length;
-    return { inbound, outbound, failed };
-  }, [conversations]);
   const windowRemaining = hoursUntil(selected?.canReplyUntil);
 
   async function loadConversations(silent = false) {
@@ -288,14 +283,36 @@ export function Conversations() {
     }
   }
 
+  async function uploadAttachment(file: File) {
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Nao foi possivel ler o arquivo."));
+      reader.readAsDataURL(file);
+    });
+    const response = await fetch(`${conversationBackendUrl}/media/upload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: file.name, contentType: file.type || "application/octet-stream", base64 }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || payload.error || `Upload HTTP ${response.status}`);
+    return {
+      url: `${conversationBackendUrl}${payload.path}`,
+      type: String(payload.type || file.type || ""),
+      name: file.name,
+    };
+  }
+
   async function sendMessage() {
-    if (!selected || !draft.trim() || sending) return;
+    if (!selected || (!draft.trim() && !attachment) || sending) return;
     if (!selected.replyWindowOpen) {
       setStatus("Essa conversa esta fora da janela de 24h. Para reabrir, envie um template aprovado pelo Broadcast.");
       return;
     }
     setSending(true);
     try {
+      const uploaded = attachment ? await uploadAttachment(attachment) : null;
       const response = await fetch(`${conversationBackendUrl}/conversations/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -303,11 +320,16 @@ export function Conversations() {
           to: selected.contactPhone,
           phoneNumberId: selected.senderPhoneNumberId,
           text: draft,
+          mediaUrl: uploaded?.url,
+          mediaType: uploaded?.type,
+          mediaName: uploaded?.name,
         }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.message || payload.error || `Envio HTTP ${response.status}`);
       setDraft("");
+      setAttachment(null);
+      setEmojiOpen(false);
       await loadConversations(true);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Falha ao enviar mensagem.");
@@ -332,35 +354,6 @@ export function Conversations() {
 
   return (
     <main className="conversations-page">
-      <div className="template-heading conversations-heading">
-        <div className="template-icon">
-          <MessageCircle size={18} />
-        </div>
-        <div>
-          <h1>Conversas</h1>
-          <p>Acompanhe respostas, entregas e falhas por remetente conectado.</p>
-        </div>
-      </div>
-
-      <section className="conversation-metric-row">
-        <article>
-          <span>Conversas</span>
-          <strong>{conversations.length}</strong>
-        </article>
-        <article>
-          <span>Recebidas</span>
-          <strong>{metrics.inbound}</strong>
-        </article>
-        <article>
-          <span>Enviadas</span>
-          <strong>{metrics.outbound}</strong>
-        </article>
-        <article>
-          <span>Falhas</span>
-          <strong>{metrics.failed}</strong>
-        </article>
-      </section>
-
       <section className="conversations-shell">
         <aside className="conversation-list-panel">
           <div className="conversation-tools">
@@ -373,7 +366,7 @@ export function Conversations() {
                 <option value="all">Todos os remetentes</option>
                 {senders.map((sender) => (
                   <option value={sender.id} key={sender.id}>
-                    {sender.name} {sender.phone ? `- ${sender.phone}` : ""}
+                    {sender.phone && sender.name === sender.phone ? sender.phone : `${sender.name}${sender.phone ? ` - ${sender.phone}` : ""}`}
                   </option>
                 ))}
               </select>
@@ -458,25 +451,50 @@ export function Conversations() {
               </div>
 
               <footer className="conversation-composer">
-                <button className="icon-button" type="button" aria-label="Anexar arquivo">
+                <label className="icon-button conversation-attach-button" aria-label="Anexar arquivo" title="Anexar mídia">
                   <Paperclip size={16} />
-                </button>
-                <textarea
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  placeholder="Digite uma resposta..."
-                  rows={2}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void sendMessage();
-                    }
-                  }}
-                />
-                <button className="icon-button" type="button" aria-label="Inserir emoji">
-                  <Smile size={16} />
-                </button>
-                <button className="button" type="button" onClick={sendMessage} disabled={!draft.trim() || sending}>
+                  <input
+                    type="file"
+                    accept="image/*,video/*,application/pdf,audio/*"
+                    onChange={(event) => setAttachment(event.target.files?.[0] || null)}
+                  />
+                </label>
+                <div className="conversation-compose-box">
+                  {attachment ? (
+                    <div className="conversation-attachment-chip">
+                      <Paperclip size={13} />
+                      <span>{attachment.name}</span>
+                      <button type="button" onClick={() => setAttachment(null)} aria-label="Remover anexo">x</button>
+                    </div>
+                  ) : null}
+                  <textarea
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    placeholder="Digite uma resposta..."
+                    rows={2}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void sendMessage();
+                      }
+                    }}
+                  />
+                </div>
+                <div className="conversation-emoji-wrap">
+                  <button className="icon-button" type="button" aria-label="Inserir emoji" onClick={() => setEmojiOpen((open) => !open)}>
+                    <Smile size={16} />
+                  </button>
+                  {emojiOpen ? (
+                    <div className="conversation-emoji-menu">
+                      {["😀", "😉", "😊", "🙏", "👍", "✅", "🔥", "🚀", "💰", "⚠️", "📲", "👇"].map((emoji) => (
+                        <button type="button" key={emoji} onClick={() => setDraft((value) => `${value}${emoji}`)}>
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <button className="button" type="button" onClick={sendMessage} disabled={(!draft.trim() && !attachment) || sending}>
                   <Send size={16} />
                   {selected.replyWindowOpen ? "Enviar" : "Usar template"}
                 </button>
