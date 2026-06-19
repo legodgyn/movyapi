@@ -6240,24 +6240,64 @@ a {
 }
 
 .conversations-page {
-  width: min(1280px, calc(100vw - 320px));
-  margin-inline: auto;
+  display: grid;
+  min-height: calc(100vh - 72px);
+  padding: 18px clamp(18px, 2.5vw, 34px) 22px;
+  gap: 14px;
 }
 
 .conversations-heading {
-  margin-bottom: 18px;
+  width: min(1480px, 100%);
+  margin: 0 auto;
+  padding: 0;
+}
+
+.conversation-metric-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  width: min(1480px, 100%);
+  margin: 0 auto;
+}
+
+.conversation-metric-row article {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, hsl(var(--md-primary) / .07), transparent 55%),
+    hsl(var(--card) / .68);
+}
+
+.conversation-metric-row span {
+  color: hsl(var(--muted-foreground));
+  font-size: .68rem;
+  font-weight: 850;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+.conversation-metric-row strong {
+  color: hsl(var(--foreground));
+  font-size: 1.25rem;
+  line-height: 1;
 }
 
 .conversations-shell {
   display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-  min-height: 680px;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(260px, 320px);
+  width: min(1480px, 100%);
+  min-height: min(760px, calc(100vh - 230px));
+  height: calc(100vh - 230px);
+  margin: 0 auto;
   overflow: hidden;
   border: 1px solid hsl(var(--border));
   border-radius: 8px;
   background:
     radial-gradient(circle at 12% 0%, hsl(var(--md-primary) / .08), transparent 34%),
-    hsl(var(--card) / .74);
+    hsl(var(--card) / .7);
   box-shadow: 0 24px 80px hsl(270 55% 8% / .26);
 }
 
@@ -6271,7 +6311,7 @@ a {
 .conversation-tools {
   display: grid;
   gap: 10px;
-  padding: 14px;
+  padding: 12px;
   border-bottom: 1px solid hsl(var(--border));
   background: hsl(var(--surface-container-low) / .42);
 }
@@ -6283,8 +6323,25 @@ a {
 }
 
 .conversation-filter-row .input {
-  height: 38px;
+  height: 36px;
   font-size: .8rem;
+}
+
+.conversation-list-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 8px;
+}
+
+.conversation-list-summary strong {
+  color: hsl(var(--foreground));
+  font-size: .78rem;
+}
+
+.conversation-list-summary span {
+  color: hsl(var(--muted-foreground));
+  font-size: .72rem;
 }
 
 .conversation-list {
@@ -6302,7 +6359,7 @@ a {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 12px;
+  padding: 11px;
   border: 1px solid transparent;
   border-radius: 8px;
   color: hsl(var(--foreground));
@@ -6324,6 +6381,20 @@ a {
   border-radius: 8px;
   color: hsl(var(--md-primary));
   background: hsl(var(--md-primary-container) / .42);
+  font-size: .75rem;
+  font-weight: 950;
+}
+
+.conversation-avatar.large {
+  width: 40px;
+  height: 40px;
+}
+
+.conversation-avatar.xl {
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+  font-size: 1rem;
 }
 
 .conversation-list-copy {
@@ -6348,10 +6419,40 @@ a {
   white-space: nowrap;
 }
 
+.conversation-list-copy em {
+  overflow: hidden;
+  color: hsl(var(--md-primary));
+  font-size: .68rem;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .conversation-list-meta {
   display: grid;
   justify-items: end;
   gap: 6px;
+}
+
+.conversation-list-empty {
+  display: grid;
+  place-items: center;
+  gap: 7px;
+  margin: 18px 10px;
+  padding: 18px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  text-align: center;
+}
+
+.conversation-list-empty strong {
+  color: hsl(var(--foreground));
+  font-size: .82rem;
+}
+
+.conversation-list-empty span {
+  font-size: .72rem;
 }
 
 .conversation-list-meta i {
@@ -6384,18 +6485,35 @@ a {
   background: hsl(var(--surface-container-low) / .26);
 }
 
-.conversation-chat-head div {
+.conversation-contact-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.conversation-contact-head div {
   display: grid;
+  min-width: 0;
   gap: 4px;
 }
 
 .conversation-chat-head strong {
+  overflow: hidden;
   font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.conversation-chat-head span {
+.conversation-contact-head div span {
   color: hsl(var(--muted-foreground));
   font-size: .78rem;
+}
+
+.conversation-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .conversation-status-pill {
@@ -6435,7 +6553,19 @@ a {
   padding: 18px;
   background:
     linear-gradient(hsl(var(--background) / .82), hsl(var(--background) / .82)),
-    radial-gradient(circle at 80% 0%, hsl(var(--md-primary) / .08), transparent 36%);
+    radial-gradient(circle at 80% 0%, hsl(var(--md-primary) / .08), transparent 36%),
+    radial-gradient(hsl(var(--border) / .45) .7px, transparent .7px);
+  background-size: auto, auto, 18px 18px;
+}
+
+.conversation-date-chip {
+  align-self: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--surface-container-high) / .74);
+  font-size: .68rem;
+  font-weight: 850;
 }
 
 .conversation-bubble {
@@ -6486,9 +6616,10 @@ a {
 
 .conversation-composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  padding: 14px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 8px;
+  padding: 12px;
   border-top: 1px solid hsl(var(--border));
   background: hsl(var(--surface-container-low) / .36);
 }
@@ -6516,6 +6647,109 @@ a {
   text-align: center;
 }
 
+.conversation-detail-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: auto;
+  border-left: 1px solid hsl(var(--border));
+  background: hsl(var(--surface-container-low) / .28);
+}
+
+.conversation-profile-card {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 22px 16px;
+  border-bottom: 1px solid hsl(var(--border));
+  text-align: center;
+}
+
+.conversation-profile-card strong {
+  color: hsl(var(--foreground));
+  font-size: .94rem;
+}
+
+.conversation-profile-card small {
+  color: hsl(var(--muted-foreground));
+  font-size: .72rem;
+}
+
+.conversation-side-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.conversation-side-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: hsl(var(--foreground));
+  font-size: .82rem;
+  font-weight: 900;
+}
+
+.conversation-side-section dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.conversation-side-section dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.conversation-side-section dt,
+.conversation-side-section dd {
+  margin: 0;
+  font-size: .75rem;
+}
+
+.conversation-side-section dt {
+  color: hsl(var(--muted-foreground));
+}
+
+.conversation-side-section dd {
+  color: hsl(var(--foreground));
+  font-weight: 800;
+  text-align: right;
+}
+
+.conversation-side-section textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 10px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--input));
+  font: inherit;
+  font-size: .8rem;
+}
+
+.conversation-history-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card) / .55);
+}
+
+.conversation-history-item strong {
+  color: hsl(var(--foreground));
+  font-size: .78rem;
+}
+
+.conversation-history-item span {
+  color: hsl(var(--muted-foreground));
+  font-size: .72rem;
+}
+
 .conversation-empty strong {
   color: hsl(var(--foreground));
   font-size: 1rem;
@@ -6525,6 +6759,38 @@ a {
   margin: 12px 0 0;
   color: hsl(var(--muted-foreground));
   font-size: .8rem;
+}
+
+@media (max-width: 1280px) {
+  .conversations-shell {
+    grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
+  }
+
+  .conversation-detail-panel {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .conversations-page {
+    padding-inline: 12px;
+  }
+
+  .conversation-metric-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .conversations-shell {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 720px;
+  }
+
+  .conversation-list-panel {
+    min-height: 310px;
+    border-right: 0;
+    border-bottom: 1px solid hsl(var(--border));
+  }
 }
 
 .meta-template-page {

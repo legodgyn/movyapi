@@ -1,5 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCheck, Clock, MessageCircle, RefreshCcw, Search, Send, Smartphone, TriangleAlert } from "lucide-react";
+import {
+  CheckCheck,
+  Clock,
+  FileText,
+  History,
+  MessageCircle,
+  MoreVertical,
+  Paperclip,
+  RefreshCcw,
+  Search,
+  Send,
+  Smile,
+  Smartphone,
+  TriangleAlert,
+} from "lucide-react";
 import { config } from "../lib/config";
 
 type ConversationMessage = {
@@ -86,6 +100,18 @@ function statusIcon(message: ConversationMessage) {
   return <Clock size={13} />;
 }
 
+function initials(value?: string) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits ? digits.slice(-2) : "?";
+}
+
+function shortTime(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
 function readLocalArray(key: string) {
   try {
     const value = JSON.parse(localStorage.getItem(key) || "[]");
@@ -163,6 +189,17 @@ export function Conversations() {
     () => conversations.find((conversation) => conversation.id === selectedId) || conversations[0],
     [conversations, selectedId],
   );
+  const selectedMessages = useMemo(
+    () => [...(selected?.messages || [])].sort((a, b) => new Date(a.createdAt || "").getTime() - new Date(b.createdAt || "").getTime()),
+    [selected],
+  );
+  const metrics = useMemo(() => {
+    const messages = conversations.flatMap((conversation) => conversation.messages || []);
+    const inbound = messages.filter((message) => message.direction === "inbound").length;
+    const outbound = messages.filter((message) => message.direction === "outbound").length;
+    const failed = messages.filter((message) => String(message.status || "").toLowerCase() === "failed").length;
+    return { inbound, outbound, failed };
+  }, [conversations]);
 
   async function loadConversations(silent = false) {
     if (!silent) setLoading(true);
@@ -224,7 +261,7 @@ export function Conversations() {
   }, [query, senderFilter]);
 
   return (
-    <main className="template-page conversations-page">
+    <main className="conversations-page">
       <div className="template-heading conversations-heading">
         <div className="template-icon">
           <MessageCircle size={18} />
@@ -234,6 +271,25 @@ export function Conversations() {
           <p>Acompanhe respostas, entregas e falhas por remetente conectado.</p>
         </div>
       </div>
+
+      <section className="conversation-metric-row">
+        <article>
+          <span>Conversas</span>
+          <strong>{conversations.length}</strong>
+        </article>
+        <article>
+          <span>Recebidas</span>
+          <strong>{metrics.inbound}</strong>
+        </article>
+        <article>
+          <span>Enviadas</span>
+          <strong>{metrics.outbound}</strong>
+        </article>
+        <article>
+          <span>Falhas</span>
+          <strong>{metrics.failed}</strong>
+        </article>
+      </section>
 
       <section className="conversations-shell">
         <aside className="conversation-list-panel">
@@ -257,6 +313,11 @@ export function Conversations() {
             </div>
           </div>
 
+          <div className="conversation-list-summary">
+            <strong>Atendimentos</strong>
+            <span>{conversations.length} conversa(s)</span>
+          </div>
+
           <div className="conversation-list">
             {conversations.map((conversation) => (
               <button
@@ -265,17 +326,25 @@ export function Conversations() {
                 key={conversation.id}
                 onClick={() => setSelectedId(conversation.id)}
               >
-                <span className="conversation-avatar"><Smartphone size={16} /></span>
+                <span className="conversation-avatar">{initials(conversation.contactPhone)}</span>
                 <span className="conversation-list-copy">
                   <strong>{phoneMask(conversation.contactPhone)}</strong>
                   <small>{conversation.lastMessage || "Sem mensagens"}</small>
+                  <em>{statusLabel(conversation.lastStatus)} - WhatsApp</em>
                 </span>
                 <span className="conversation-list-meta">
-                  <small>{formatTime(conversation.lastAt)}</small>
+                  <small>{shortTime(conversation.lastAt)}</small>
                   {conversation.unread ? <i>{conversation.unread}</i> : null}
                 </span>
               </button>
             ))}
+            {!conversations.length ? (
+              <div className="conversation-list-empty">
+                <MessageCircle size={18} />
+                <strong>Nenhuma conversa ainda</strong>
+                <span>As respostas do webhook aparecem aqui.</span>
+              </div>
+            ) : null}
           </div>
         </aside>
 
@@ -283,22 +352,31 @@ export function Conversations() {
           {selected ? (
             <>
               <header className="conversation-chat-head">
-                <div>
-                  <strong>{phoneMask(selected.contactPhone)}</strong>
-                  <span>{selected.senderName || "Remetente"} {selected.senderPhone ? `- ${selected.senderPhone}` : ""}</span>
+                <div className="conversation-contact-head">
+                  <span className="conversation-avatar large">{initials(selected.contactPhone)}</span>
+                  <div>
+                    <strong>{phoneMask(selected.contactPhone)}</strong>
+                    <span>{selected.senderName || "Remetente"} {selected.senderPhone ? `- ${selected.senderPhone}` : ""}</span>
+                  </div>
                 </div>
-                <span className={`conversation-status-pill ${String(selected.lastStatus || "").toLowerCase()}`}>
-                  {statusLabel(selected.lastStatus)}
-                </span>
+                <div className="conversation-head-actions">
+                  <span className={`conversation-status-pill ${String(selected.lastStatus || "").toLowerCase()}`}>
+                    {statusLabel(selected.lastStatus)}
+                  </span>
+                  <button className="icon-button" type="button" aria-label="Mais opcoes">
+                    <MoreVertical size={16} />
+                  </button>
+                </div>
               </header>
 
               <div className="conversation-messages">
-                {selected.messages.map((message) => (
+                <span className="conversation-date-chip">Hoje</span>
+                {selectedMessages.map((message) => (
                   <article className={`conversation-bubble ${message.direction}`} key={message.id || message.messageId}>
                     <p>{message.text || statusLabel(message.status)}</p>
                     {message.errorMessage ? <small className="conversation-error">{message.errorMessage}</small> : null}
                     <span>
-                      {formatTime(message.createdAt)}
+                      {shortTime(message.createdAt)}
                       {message.direction === "outbound" ? statusIcon(message) : null}
                       {message.direction === "outbound" ? statusLabel(message.status) : ""}
                     </span>
@@ -307,6 +385,9 @@ export function Conversations() {
               </div>
 
               <footer className="conversation-composer">
+                <button className="icon-button" type="button" aria-label="Anexar arquivo">
+                  <Paperclip size={16} />
+                </button>
                 <textarea
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
@@ -319,6 +400,9 @@ export function Conversations() {
                     }
                   }}
                 />
+                <button className="icon-button" type="button" aria-label="Inserir emoji">
+                  <Smile size={16} />
+                </button>
                 <button className="button" type="button" onClick={sendMessage} disabled={!draft.trim() || sending}>
                   <Send size={16} />
                   Enviar
@@ -333,6 +417,58 @@ export function Conversations() {
             </div>
           )}
         </section>
+
+        <aside className="conversation-detail-panel">
+          <div className="conversation-profile-card">
+            <span className="conversation-avatar xl">{initials(selected?.contactPhone)}</span>
+            <strong>{selected ? phoneMask(selected.contactPhone) : "Contato"}</strong>
+            <small>{selected?.lastAt ? `Ultima interacao ${formatTime(selected.lastAt)}` : "Nenhuma conversa selecionada"}</small>
+          </div>
+
+          <div className="conversation-side-section">
+            <div className="conversation-side-title">
+              <Smartphone size={15} />
+              Perfil
+            </div>
+            <dl>
+              <div>
+                <dt>Telefone</dt>
+                <dd>{selected ? phoneMask(selected.contactPhone) : "-"}</dd>
+              </div>
+              <div>
+                <dt>Remetente</dt>
+                <dd>{selected?.senderName || "Remetente"}</dd>
+              </div>
+              <div>
+                <dt>Status</dt>
+                <dd>{statusLabel(selected?.lastStatus)}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className="conversation-side-section">
+            <div className="conversation-side-title">
+              <FileText size={15} />
+              Notas internas
+            </div>
+            <textarea placeholder="Anotacoes do atendimento..." rows={5} />
+          </div>
+
+          <div className="conversation-side-section">
+            <div className="conversation-side-title">
+              <History size={15} />
+              Historico
+            </div>
+            <div className="conversation-history-item">
+              <strong>Webhook conectado</strong>
+              <span>Respostas e status entram automaticamente.</span>
+            </div>
+            <div className="conversation-history-item">
+              <strong>Ultimo evento</strong>
+              <span>{selected?.lastAt ? formatTime(selected.lastAt) : "-"}</span>
+            </div>
+          </div>
+        </aside>
       </section>
 
       {status && selected ? <p className="conversation-page-status">{status}</p> : null}
