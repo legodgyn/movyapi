@@ -844,31 +844,43 @@ async function listConversations(params = {}) {
     if (!fallbackId) return [];
     return [[fallbackId, { id: fallbackId, name: bmName, phone: account.phoneNumber || account.senderNumber || "" }]];
   });
-  const senders = Array.from(
-    new Map(
-      [
-        ...accountSenders,
-        ...connectedSenders.map((sender) => [
-          String(sender.phoneNumberId || ""),
-          {
-            id: String(sender.phoneNumberId || ""),
-            name: firstNonEmpty(sender.verifiedName, sender.bmName, "Remetente"),
-            phone: sender.phone || "",
-          },
-        ]),
-        ...messages
-          .filter((message) => message.senderPhoneNumberId)
-          .map((message) => [
-            String(message.senderPhoneNumberId),
-            {
-              id: String(message.senderPhoneNumberId),
-              name: message.senderName || "Remetente",
-              phone: message.senderPhone || "",
-            },
-          ]),
-      ].filter(([id]) => id),
-    ).values(),
-  ).map((sender) => {
+  const senderRows = [
+    ...accountSenders,
+    ...connectedSenders.map((sender) => [
+      String(sender.phoneNumberId || ""),
+      {
+        id: String(sender.phoneNumberId || ""),
+        name: firstNonEmpty(sender.verifiedName, sender.bmName, "Remetente"),
+        phone: sender.phone || "",
+      },
+    ]),
+    ...messages
+      .filter((message) => message.senderPhoneNumberId)
+      .map((message) => [
+        String(message.senderPhoneNumberId),
+        {
+          id: String(message.senderPhoneNumberId),
+          name: message.senderName || "Remetente",
+          phone: message.senderPhone || "",
+        },
+      ]),
+  ].filter(([id]) => id);
+  const senderMap = new Map();
+  senderRows.forEach(([id, sender]) => {
+    const current = senderMap.get(String(id)) || { id: String(id), name: "", phone: "" };
+    const nextPhone = firstNonEmpty(current.phone, sender.phone);
+    const currentName = firstNonEmpty(current.name);
+    const incomingName = firstNonEmpty(sender.name);
+    const currentIsPhone = nextPhone && normalizeBrazilPhone(currentName) === normalizeBrazilPhone(nextPhone);
+    const incomingIsPhone = nextPhone && normalizeBrazilPhone(incomingName) === normalizeBrazilPhone(nextPhone);
+    const candidateName = currentIsPhone && incomingName && !incomingIsPhone ? incomingName : firstNonEmpty(currentName, incomingName, sender.phone, "Remetente");
+    senderMap.set(String(id), {
+      id: String(id),
+      name: candidateName === nextPhone ? firstNonEmpty(current.name, sender.name, "Remetente") : candidateName,
+      phone: nextPhone,
+    });
+  });
+  const senders = Array.from(senderMap.values()).map((sender) => {
     const related = messages.find((message) => String(message.senderPhoneNumberId || "") === String(sender.id || ""));
     return {
       ...sender,
