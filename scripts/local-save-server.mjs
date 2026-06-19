@@ -772,6 +772,14 @@ function conversationFromMessages(messages) {
 
 async function listConversations(params = {}) {
   const messages = await readConversationMessages();
+  const storedConnected = await getStoredValue("movy.connectedSenders");
+  const storedAccounts = await getStoredValue("scaleapi.bmAccounts");
+  const storedSettings = await getStoredValue("scaleapi.bmSettings");
+  const connectedSenders = Array.isArray(storedConnected) ? storedConnected : [];
+  const accounts = [
+    ...(Array.isArray(storedAccounts) ? storedAccounts : storedAccounts ? [storedAccounts] : []),
+    ...(storedSettings ? [storedSettings] : []),
+  ].filter((item) => item && typeof item === "object");
   const query = String(params.q || "").trim().toLowerCase();
   const sender = String(params.sender || "").trim();
   const filtered = messages.filter((message) => {
@@ -780,18 +788,53 @@ async function listConversations(params = {}) {
     return senderOk && (!query || haystack.includes(query));
   });
   const conversations = conversationFromMessages(filtered);
+  const accountSenders = accounts.flatMap((account, accountIndex) => {
+    const bmName = firstNonEmpty(account.name, account.businessName, account.label, `BM ${accountIndex + 1}`);
+    const wabaId = String(account.defaultWabaId || account.wabaId || "");
+    const connectedIds = new Set([
+      account.defaultPhoneNumberId || account.phoneNumberId || "",
+      ...(Array.isArray(account.connectedPhoneIds) ? account.connectedPhoneIds : []),
+      ...connectedSenders.filter((item) => String(item.wabaId || "") === wabaId || String(item.bmId || "") === String(account.id || "")).map((item) => item.phoneNumberId),
+    ].filter(Boolean).map(String));
+    const phones = Array.isArray(account.phones) ? account.phones : [];
+    const phoneRows = phones
+      .filter((phone) => connectedIds.size === 0 || connectedIds.has(String(phone.id || "")))
+      .map((phone) => [
+        String(phone.id || ""),
+        {
+          id: String(phone.id || ""),
+          name: firstNonEmpty(phone.verified_name, phone.verifiedName, bmName),
+          phone: phone.display_phone_number || phone.phone || "",
+        },
+      ]);
+    if (phoneRows.length) return phoneRows;
+    const fallbackId = String(account.defaultPhoneNumberId || account.phoneNumberId || "");
+    if (!fallbackId) return [];
+    return [[fallbackId, { id: fallbackId, name: bmName, phone: account.phoneNumber || account.senderNumber || "" }]];
+  });
   const senders = Array.from(
     new Map(
-      messages
-        .filter((message) => message.senderPhoneNumberId)
-        .map((message) => [
-          String(message.senderPhoneNumberId),
+      [
+        ...accountSenders,
+        ...connectedSenders.map((sender) => [
+          String(sender.phoneNumberId || ""),
           {
-            id: String(message.senderPhoneNumberId),
-            name: message.senderName || "Remetente",
-            phone: message.senderPhone || "",
+            id: String(sender.phoneNumberId || ""),
+            name: firstNonEmpty(sender.verifiedName, sender.bmName, "Remetente"),
+            phone: sender.phone || "",
           },
         ]),
+        ...messages
+          .filter((message) => message.senderPhoneNumberId)
+          .map((message) => [
+            String(message.senderPhoneNumberId),
+            {
+              id: String(message.senderPhoneNumberId),
+              name: message.senderName || "Remetente",
+              phone: message.senderPhone || "",
+            },
+          ]),
+      ].filter(([id]) => id),
     ).values(),
   );
   return { ok: true, conversations, senders, total: conversations.length };

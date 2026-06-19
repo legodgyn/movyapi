@@ -37,6 +37,9 @@ type SenderOption = {
 };
 
 function movyBackendUrl() {
+  if (typeof window !== "undefined" && /localhost|127\.0\.0\.1/.test(window.location.hostname)) {
+    return config.localBackendUrl.replace(/\/$/, "");
+  }
   const apiUrl = config.apiUrl.replace(/\/api\/v1\/?$/, "").replace(/\/$/, "");
   if (/localhost|127\.0\.0\.1/.test(apiUrl)) return config.localBackendUrl.replace(/\/$/, "");
   return apiUrl;
@@ -83,6 +86,68 @@ function statusIcon(message: ConversationMessage) {
   return <Clock size={13} />;
 }
 
+function readLocalArray(key: string) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+  } catch {
+    return [];
+  }
+}
+
+function textOf(value: unknown, fallback = "") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function localSenderOptions() {
+  if (typeof window === "undefined") return [];
+  const connected = readLocalArray("movy.connectedSenders");
+  const accounts = readLocalArray("scaleapi.bmAccounts");
+  const options: SenderOption[] = [];
+
+  connected.forEach((sender, index) => {
+    const id = textOf(sender.phoneNumberId);
+    if (!id) return;
+    options.push({
+      id,
+      name: textOf(sender.verifiedName, textOf(sender.bmName, `Remetente ${index + 1}`)),
+      phone: textOf(sender.phone),
+    });
+  });
+
+  accounts.forEach((account, accountIndex) => {
+    const bmName = textOf(account.name, textOf(account.businessName, textOf(account.label, `BM ${accountIndex + 1}`)));
+    const connectedIds = new Set(
+      [
+        textOf(account.defaultPhoneNumberId),
+        textOf(account.phoneNumberId),
+        ...(Array.isArray(account.connectedPhoneIds) ? account.connectedPhoneIds.map((item) => textOf(item)) : []),
+      ].filter(Boolean),
+    );
+    const phones = Array.isArray(account.phones) ? (account.phones as Array<Record<string, unknown>>) : [];
+    phones.forEach((phone) => {
+      const id = textOf(phone.id);
+      if (!id || (connectedIds.size && !connectedIds.has(id))) return;
+      options.push({
+        id,
+        name: textOf(phone.verified_name, textOf(phone.verifiedName, bmName)),
+        phone: textOf(phone.display_phone_number, textOf(phone.phone)),
+      });
+    });
+    if (!phones.length) {
+      const fallbackId = textOf(account.defaultPhoneNumberId, textOf(account.phoneNumberId));
+      if (fallbackId) options.push({ id: fallbackId, name: bmName, phone: textOf(account.phoneNumber, textOf(account.senderNumber)) });
+    }
+  });
+
+  return Array.from(new Map(options.filter((item) => item.id).map((item) => [item.id, item])).values());
+}
+
+function mergeSenderOptions(remote: unknown) {
+  const remoteOptions = Array.isArray(remote) ? (remote as SenderOption[]) : [];
+  return Array.from(new Map([...remoteOptions, ...localSenderOptions()].filter((item) => item.id).map((item) => [item.id, item])).values());
+}
+
 export function Conversations() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [senders, setSenders] = useState<SenderOption[]>([]);
@@ -110,7 +175,7 @@ export function Conversations() {
       if (!response.ok) throw new Error(payload.error || `Conversas HTTP ${response.status}`);
       const next = Array.isArray(payload.conversations) ? payload.conversations : [];
       setConversations(next);
-      setSenders(Array.isArray(payload.senders) ? payload.senders : []);
+      setSenders(mergeSenderOptions(payload.senders));
       setSelectedId((current) => (current && next.some((item: Conversation) => item.id === current) ? current : next[0]?.id || ""));
       setStatus(next.length ? "" : "Nenhuma conversa encontrada ainda. As novas mensagens chegam aqui pelo webhook.");
     } catch (error) {
