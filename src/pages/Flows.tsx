@@ -658,6 +658,8 @@ function readBmSenders(): InfobipApi[] {
     if (phoneSenders.length) return phoneSenders;
     const fallbackPhoneId = account.defaultPhoneNumberId || account.phoneNumberId || "";
     if (!fallbackPhoneId) return [];
+    const fallbackPhone = (account.phones || []).find((phone) => phone.id === fallbackPhoneId);
+    const fallbackPhoneNumber = fallbackPhone?.display_phone_number || account.phoneNumber || "";
     return [
       {
         ...account,
@@ -669,10 +671,10 @@ function readBmSenders(): InfobipApi[] {
         wabaId,
         defaultPhoneNumberId: fallbackPhoneId,
         phoneNumberId: fallbackPhoneId,
-        phoneNumber: account.phoneNumber || fallbackPhoneId,
-        verifiedName: account.name || account.businessName || account.label,
-        sender_number: account.phoneNumber || fallbackPhoneId,
-        senderNumber: account.phoneNumber || fallbackPhoneId,
+        phoneNumber: fallbackPhoneNumber,
+        verifiedName: fallbackPhone?.verified_name || account.name || account.businessName || account.label,
+        sender_number: fallbackPhoneNumber,
+        senderNumber: fallbackPhoneNumber,
         api_type: "whatsapp_cloud",
         base_url: wabaId ? `WABA ${wabaId}` : "WhatsApp Cloud API",
         status: account.status || "connected",
@@ -874,7 +876,10 @@ function senderLabel(sender: InfobipApi) {
 }
 
 function senderNumber(sender: InfobipApi) {
+  const phoneNumberId = String(sender.defaultPhoneNumberId || sender.phoneNumberId || "").trim();
+  const matchedPhone = Array.isArray(sender.phones) ? sender.phones.find((phone) => phone.id === phoneNumberId) : undefined;
   const candidates = [
+    matchedPhone?.display_phone_number,
     sender.display_phone_number,
     sender.displayPhoneNumber,
     sender.phoneNumber,
@@ -1279,20 +1284,6 @@ export function Flows() {
   );
   const runPercent = flowRun.total ? Math.min(100, Math.round(((flowRun.delivered + flowRun.failed) / flowRun.total) * 100)) : 0;
   const canOpenBroadcast = Boolean(savedFlowAt) && !flowDirty;
-  const flowTotals = useMemo(
-    () =>
-      flowList.reduce(
-        (acc, item) => {
-          acc.total += item.stats?.total || 0;
-          acc.sent += item.stats?.sent || 0;
-          acc.delivered += item.stats?.delivered || 0;
-          acc.failed += item.stats?.failed || 0;
-          return acc;
-        },
-        { total: 0, sent: 0, delivered: 0, failed: 0 },
-      ),
-    [flowList],
-  );
   const filteredFlows = useMemo(() => {
     const query = flowSearch.trim().toLowerCase();
     if (!query) return flowList;
@@ -2137,25 +2128,6 @@ export function Flows() {
                 <Plus size={16} />
                 Criar fluxo
               </button>
-            </div>
-          </div>
-
-          <div className="broadcast-summary-grid">
-            <div>
-              <span>Aceitos Meta</span>
-              <strong>{flowTotals.sent.toLocaleString("pt-BR")}</strong>
-            </div>
-            <div>
-              <span>Entregues</span>
-              <strong>{flowTotals.delivered.toLocaleString("pt-BR")}</strong>
-            </div>
-            <div>
-              <span>Falhas</span>
-              <strong>{flowTotals.failed.toLocaleString("pt-BR")}</strong>
-            </div>
-            <div>
-              <span>Fluxos</span>
-              <strong>{flowList.length.toLocaleString("pt-BR")}</strong>
             </div>
           </div>
 
