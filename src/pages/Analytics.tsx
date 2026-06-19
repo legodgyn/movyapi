@@ -471,6 +471,8 @@ export function Analytics() {
   const [period, setPeriod] = useState("Últimas 24h");
   const [senderFilter, setSenderFilter] = useState("Todos os remetentes");
   const [bmFilter, setBmFilter] = useState("Todas as BMs");
+  const [detailPage, setDetailPage] = useState(1);
+  const [detailPageSize, setDetailPageSize] = useState(20);
   const [userFilter, setUserFilter] = useState("Todos os usuários");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
@@ -506,6 +508,10 @@ export function Analytics() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    setDetailPage(1);
+  }, [bmFilter, detailPageSize, period, query, senderFilter, userFilter]);
 
   const filteredRows = useMemo(() => {
     const search = query.trim().toLowerCase();
@@ -550,6 +556,18 @@ export function Analytics() {
     .sort((a, b) => b.sent - a.sent)
     .slice(0, 8)
     .map((row) => ({ ...row, senderLabel: senderDisplay(row) }));
+  const detailRows = useMemo(
+    () =>
+      filteredRows
+        .slice()
+        .sort((a, b) => new Date(b.lastAt || 0).getTime() - new Date(a.lastAt || 0).getTime()),
+    [filteredRows],
+  );
+  const detailPageCount = Math.max(1, Math.ceil(detailRows.length / detailPageSize));
+  const safeDetailPage = Math.min(detailPage, detailPageCount);
+  const detailStart = detailRows.length ? (safeDetailPage - 1) * detailPageSize : 0;
+  const detailPageRows = detailRows.slice(detailStart, detailStart + detailPageSize);
+  const detailEnd = Math.min(detailStart + detailPageSize, detailRows.length);
   const pieData = [
     { name: "Entregues", value: totals.delivered, color: "hsl(var(--success))" },
     { name: "Falhas", value: totals.failed, color: "hsl(var(--danger))" },
@@ -776,6 +794,14 @@ export function Analytics() {
               <Search size={15} />
               <input placeholder="Buscar..." value={query} onChange={(event) => setQuery(event.target.value)} />
             </label>
+            <label className="analytics-page-size">
+              <span>Mostrar</span>
+              <select className="select" value={detailPageSize} onChange={(event) => setDetailPageSize(Number(event.target.value))}>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </label>
             <button className="button secondary compact" onClick={exportCsv} disabled={!filteredRows.length}>
               <Download size={15} />
               CSV
@@ -796,7 +822,7 @@ export function Analytics() {
             <span>Taxa</span>
             <span>Último</span>
           </div>
-          {filteredRows.map((row) => (
+          {detailPageRows.map((row) => (
             <div className="analytics-table-row" key={row.key}>
               <span>
                 <strong>{row.bm}</strong>
@@ -825,7 +851,30 @@ export function Analytics() {
             </div>
           ) : null}
         </div>
-        <p className="hint">{filteredRows.length} registro(s)</p>
+        <div className="analytics-pagination">
+          <span>
+            {detailRows.length ? `${detailStart + 1}-${detailEnd}` : "0"} de {detailRows.length} registro(s)
+          </span>
+          <div>
+            <button
+              className="button secondary compact"
+              type="button"
+              disabled={safeDetailPage <= 1}
+              onClick={() => setDetailPage((page) => Math.max(1, page - 1))}
+            >
+              Anterior
+            </button>
+            <strong>{safeDetailPage} / {detailPageCount}</strong>
+            <button
+              className="button secondary compact"
+              type="button"
+              disabled={safeDetailPage >= detailPageCount}
+              onClick={() => setDetailPage((page) => Math.min(detailPageCount, page + 1))}
+            >
+              Proxima
+            </button>
+          </div>
+        </div>
       </section>
     </main>
   );
