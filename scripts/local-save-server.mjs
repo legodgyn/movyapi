@@ -1553,6 +1553,7 @@ async function advanceFlowSession(runtime, session, nextNodeId, reason = "", dep
     session.currentMessageId = result.messageId;
     session.outboundMessageIds = Array.from(new Set([...(session.outboundMessageIds || []), result.messageId]));
     runtime.outboundIndex[result.messageId] = session.id;
+    const sessionSender = asRecord(session.sender);
     await appendBroadcastAnalyticsEvents([
       {
         id: result.messageId,
@@ -1562,11 +1563,11 @@ async function advanceFlowSession(runtime, session, nextNodeId, reason = "", dep
         campaignName: session.flowName || "Fluxo",
         mode: "flow",
         channel: "whatsapp_cloud",
-        bm: "Fluxos",
-        wabaId: "",
-        user: "Admin",
-        sender: session.flowName || "Fluxo",
-        phone: session.phoneNumberId || "",
+        bm: firstNonEmpty(sessionSender.bmName, sessionSender.businessName, sessionSender.bm, "BM nao informada"),
+        wabaId: firstNonEmpty(sessionSender.wabaId, sessionSender.waba_id),
+        user: firstNonEmpty(session.user, "Admin"),
+        sender: firstNonEmpty(sessionSender.name, sessionSender.verifiedName, session.flowName, "Fluxo"),
+        phone: firstNonEmpty(sessionSender.phone, sessionSender.phoneNumber, session.phoneNumberId),
         phoneNumberId: session.phoneNumberId || "",
         recipient: session.phone,
         templateId: "",
@@ -1615,6 +1616,8 @@ async function registerFlowSession(payload, recipient, lot, messageId) {
   if (!phone || !messageId) return null;
   const sessionId = `${String(payload.id || "flow")}:${phone}`;
   const lotSender = asRecord(asRecord(lot).sender);
+  const payloadSender = asRecord(payload.sender);
+  const sessionSender = Object.keys(lotSender).length ? lotSender : payloadSender;
   const session = {
     id: sessionId,
     broadcastId: String(payload.id || ""),
@@ -1633,6 +1636,14 @@ async function registerFlowSession(payload, recipient, lot, messageId) {
     outboundMessageIds: [messageId],
     accessToken: String(recipient.accessToken || lotSender.accessToken || asRecord(payload.sender).accessToken || ""),
     phoneNumberId: String(recipient.phoneNumberId || lotSender.phoneNumberId || asRecord(payload.sender).phoneNumberId || ""),
+    sender: {
+      bmName: firstNonEmpty(sessionSender.bmName, sessionSender.businessName, sessionSender.bm_name, sessionSender.name),
+      wabaId: firstNonEmpty(sessionSender.wabaId, sessionSender.waba_id),
+      name: senderAnalyticsName(sessionSender, recipient.senderName),
+      phone: firstNonEmpty(sessionSender.phoneNumber, sessionSender.phone, sessionSender.senderNumber, recipient.senderPhone),
+      phoneNumberId: firstNonEmpty(recipient.phoneNumberId, sessionSender.phoneNumberId, payload.phoneNumberId),
+    },
+    user: firstNonEmpty(payload.createdBy, payload.user, payload.operator, "Admin"),
     status: "waiting_reply",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

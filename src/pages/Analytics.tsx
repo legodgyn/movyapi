@@ -50,6 +50,17 @@ type FilterOptions = {
 
 const LOCAL_BROADCAST_RUN_KEY = "scaleapi.broadcastRun";
 const LOCAL_BROADCAST_PAYLOAD_KEY = "scaleapi.broadcastLastPayload";
+const LOCAL_BM_SETTINGS_KEY = "scaleapi.bmSettings";
+const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
+const LOCAL_CONNECTED_SENDERS_KEY = "movy.connectedSenders";
+
+type SenderDirectoryEntry = {
+  bm: string;
+  wabaId: string;
+  sender: string;
+  phone: string;
+  phoneNumberId: string;
+};
 
 function movyBackendUrl() {
   const configured = config.mediaBackendUrl || config.localBackendUrl;
@@ -85,6 +96,133 @@ function textOf(record: Record<string, unknown>, keys: string[], fallback = "") 
     if (value !== undefined && value !== null && String(value).trim()) return String(value);
   }
   return fallback;
+}
+
+function normalizeText(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function onlyDigits(value: unknown) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function isSourcePlaceholder(value: unknown) {
+  return ["fluxo", "fluxos", "flow", "flows"].includes(normalizeText(value));
+}
+
+function readLocalArray(key: string) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(parsed) ? (parsed.filter((item) => item && typeof item === "object") as Record<string, unknown>[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function readLocalRecord(key: string) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "{}");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function accountDisplayName(account: Record<string, unknown>) {
+  return textOf(account, ["name", "businessName", "bmName", "defaultWabaId", "id"], "BM conectada");
+}
+
+function buildSenderDirectory(): SenderDirectoryEntry[] {
+  const entries: SenderDirectoryEntry[] = [];
+  const pushEntry = (entry: Partial<SenderDirectoryEntry>) => {
+    const bm = String(entry.bm || "").trim();
+    const sender = String(entry.sender || bm || "").trim();
+    const phone = String(entry.phone || "").trim();
+    const phoneNumberId = String(entry.phoneNumberId || "").trim();
+    const wabaId = String(entry.wabaId || "").trim();
+    if (!bm && !sender && !phone && !phoneNumberId) return;
+    entries.push({ bm: bm || sender || "BM conectada", sender: sender || bm || "Remetente", phone, phoneNumberId, wabaId });
+  };
+
+  readLocalArray(LOCAL_CONNECTED_SENDERS_KEY).forEach((sender) => {
+    pushEntry({
+      bm: textOf(sender, ["bmName", "businessName", "bm"]),
+      wabaId: textOf(sender, ["wabaId", "waba_id"]),
+      sender: textOf(sender, ["verifiedName", "name", "senderName"], textOf(sender, ["bmName", "businessName", "bm"])),
+      phone: textOf(sender, ["phone", "phoneNumber", "senderNumber", "sender_number"]),
+      phoneNumberId: textOf(sender, ["phoneNumberId", "defaultPhoneNumberId"]),
+    });
+  });
+
+  [...readLocalArray(LOCAL_BM_ACCOUNTS_KEY), readLocalRecord(LOCAL_BM_SETTINGS_KEY)].forEach((account) => {
+    const bm = accountDisplayName(account);
+    const wabaId = textOf(account, ["defaultWabaId", "wabaId", "waba_id", "id"]);
+    pushEntry({
+      bm,
+      wabaId,
+      sender: bm,
+      phone: textOf(account, ["phoneNumber", "senderNumber", "sender_number"]),
+      phoneNumberId: textOf(account, ["defaultPhoneNumberId", "phoneNumberId"]),
+    });
+    const phones = Array.isArray(account.phones) ? account.phones : [];
+    phones.forEach((phone) => {
+      if (!phone || typeof phone !== "object") return;
+      const record = phone as Record<string, unknown>;
+      pushEntry({
+        bm,
+        wabaId,
+        sender: textOf(record, ["verified_name", "verifiedName", "name"], bm),
+        phone: textOf(record, ["display_phone_number", "displayPhoneNumber", "phone", "number"]),
+        phoneNumberId: textOf(record, ["id", "phoneNumberId"]),
+      });
+    });
+  });
+
+  const map = new Map<string, SenderDirectoryEntry>();
+  entries.forEach((entry, index) => {
+    const key = [entry.wabaId, entry.phoneNumberId, onlyDigits(entry.phone), normalizeText(entry.sender), normalizeText(entry.bm), index].join("|");
+    map.set(key, entry);
+  });
+  return Array.from(map.values());
+}
+
+function findSenderDirectoryMatch(row: SenderMetric, directory: SenderDirectoryEntry[]) {
+  const rowPhoneDigits = onlyDigits(row.phone);
+  const rowPhoneRaw = String(row.phone || "").trim();
+  const rowPhoneId = String((row as SenderMetric & { phoneNumberId?: string }).phoneNumberId || "").trim();
+  const rowWaba = String(row.wabaId || "").trim();
+  const rowBm = normalizeText(row.bm);
+  const rowSender = normalizeText(row.sender);
+
+  return directory.find((entry) => {
+    const entryPhoneDigits = onlyDigits(entry.phone);
+    const entryPhoneId = String(entry.phoneNumberId || "").trim();
+    const entryWaba = String(entry.wabaId || "").trim();
+    const entryBm = normalizeText(entry.bm);
+    const entrySender = normalizeText(entry.sender);
+
+    if (rowPhoneId && entryPhoneId && rowPhoneId === entryPhoneId) return true;
+    if (rowPhoneRaw && entryPhoneId && rowPhoneRaw === entryPhoneId) return true;
+    if (rowPhoneDigits && entryPhoneDigits && rowPhoneDigits === entryPhoneDigits) return true;
+    if (rowWaba && entryWaba && rowWaba === entryWaba && (rowBm === entryBm || rowSender === entrySender || rowSender === entryBm || isSourcePlaceholder(row.bm))) return true;
+    if (isSourcePlaceholder(row.bm) && (rowSender === entryBm || rowSender === entrySender)) return true;
+    return false;
+  });
+}
+
+function hydrateMetricSender(row: SenderMetric, directory: SenderDirectoryEntry[]) {
+  const match = findSenderDirectoryMatch(row, directory);
+  const bm = match?.bm || (isSourcePlaceholder(row.bm) && !isSourcePlaceholder(row.sender) ? row.sender : row.bm);
+  const sender = match?.sender || row.sender;
+  const phone = match?.phone || row.phone;
+  const wabaId = match?.wabaId || row.wabaId;
+  const next = { ...row, bm, sender, phone, wabaId };
+  next.key = metricKey(next);
+  return next;
 }
 
 function unwrapList(payload: unknown): Record<string, unknown>[] {
@@ -341,14 +479,16 @@ export function Analytics() {
     setLoading(true);
     setStatus("Buscando dados reais dos disparos...");
     try {
-      const analyticsPayload = await fetchMovyAnalytics({ period, sender: senderFilter, bm: bmFilter, user: userFilter });
+      const analyticsPayload = await fetchMovyAnalytics({ period });
+      const senderDirectory = buildSenderDirectory();
       const analyticsRows = unwrapList(analyticsPayload)
         .filter((item) => inPeriod(item.createdAt ?? item.created_at ?? item.startedAt ?? item.updated_at, period))
-        .map(fromAnalyticsItem);
+        .map(fromAnalyticsItem)
+        .map((row) => hydrateMetricSender(row, senderDirectory));
       setReportRows(parseReportRows(analyticsPayload as Record<string, unknown>));
       setFilterOptions(parseFilterOptions(analyticsPayload as Record<string, unknown>));
       const local = localBroadcastMetric();
-      const localRows = local && inPeriod(local.lastAt, period) ? [local] : [];
+      const localRows = local && inPeriod(local.lastAt, period) ? [hydrateMetricSender(local, senderDirectory)] : [];
       const merged = mergeMetrics([...analyticsRows, ...localRows]);
       setRows(merged);
       setStatus(merged.length ? `${merged.length} grupo(s) de disparo carregado(s).` : "Nenhum disparo real encontrado para os filtros atuais.");
@@ -402,8 +542,8 @@ export function Analytics() {
     };
   }, [filteredRows]);
 
-  const senders = useMemo(() => filterOptions.senders.length ? filterOptions.senders : Array.from(new Set(rows.map(senderDisplay))).sort(), [filterOptions.senders, rows]);
-  const bms = useMemo(() => filterOptions.bms.length ? filterOptions.bms : Array.from(new Set(rows.map((row) => row.bm))).sort(), [filterOptions.bms, rows]);
+  const senders = useMemo(() => Array.from(new Set(rows.map(senderDisplay))).filter(Boolean).sort(), [rows]);
+  const bms = useMemo(() => Array.from(new Set(rows.map((row) => row.bm).filter((bm) => bm && !isSourcePlaceholder(bm)))).sort(), [rows]);
   const users = useMemo(() => filterOptions.users.length ? filterOptions.users : Array.from(new Set(rows.map((row) => row.user))).filter(Boolean).sort(), [filterOptions.users, rows]);
   const topRows = filteredRows
     .slice()
