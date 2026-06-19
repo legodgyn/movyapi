@@ -874,7 +874,21 @@ function senderLabel(sender: InfobipApi) {
 }
 
 function senderNumber(sender: InfobipApi) {
-  return String(sender.phoneNumber || sender.sender_number || sender.senderNumber || sender.base_url || "WhatsApp Cloud API");
+  const candidates = [
+    sender.display_phone_number,
+    sender.displayPhoneNumber,
+    sender.phoneNumber,
+    sender.phone_number,
+    sender.phone,
+    sender.number,
+    sender.sender_number,
+    sender.senderNumber,
+  ];
+  const phone = candidates.find((value) => {
+    const digits = onlyDigits(value);
+    return digits.length >= 10 && digits.length <= 15;
+  });
+  return String(phone || "WhatsApp Cloud API");
 }
 
 function senderBusinessLabel(sender: InfobipApi) {

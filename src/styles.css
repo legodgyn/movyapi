@@ -8095,7 +8095,14 @@ a {
 }
 
 .flow-table .campaign-table-head {
-  padding-left: 14px;
+  margin: 2px 0 8px;
+  padding: 0 14px 10px;
+}
+
+.flow-table .campaign-empty {
+  margin-top: 8px;
+  min-height: 168px;
+  padding: 50px 18px;
 }
 
 .flow-table .campaign-row {
