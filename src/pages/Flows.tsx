@@ -333,46 +333,11 @@ const initialNodes: Node<FlowNodeData>[] = [
     id: "start",
     type: "flowCard",
     position: { x: 110, y: 145 },
-    data: templateToStartData(fallbackTemplates[0]),
-  },
-  {
-    id: "button-0-text",
-    type: "flowCard",
-    position: { x: 435, y: 120 },
-    data: { kind: "text", title: "Resposta Sim", subtitle: "Caminho do botão Sim", body: "Perfeito, vou continuar seu atendimento." },
-  },
-  {
-    id: "button-1-blacklist",
-    type: "flowCard",
-    position: { x: 435, y: 320 },
-    data: { kind: "blacklist", title: "Resposta Não", subtitle: "blacklist" },
-  },
-  {
-    id: "delay-1",
-    type: "flowCard",
-    position: { x: 720, y: 120 },
-    data: { kind: "delay", title: "Delay", subtitle: "1000ms", delayMs: "1000" },
-  },
-  {
-    id: "interactive-1",
-    type: "flowCard",
-    position: { x: 1010, y: 120 },
-    data: {
-      kind: "interactive",
-      title: "Interativo",
-      subtitle: "Texto do corpo...",
-      body: "Mensagem principal...",
-      buttons: ["CLIQUE AQUI"],
-    },
+    data: emptyStartData(),
   },
 ];
 
-const initialEdges: Edge[] = [
-  { id: "e-start-sim", source: "start", sourceHandle: "button-0", target: "button-0-text", animated: true, label: "Sim" },
-  { id: "e-start-nao", source: "start", sourceHandle: "button-1", target: "button-1-blacklist", animated: true, label: "Não" },
-  { id: "e-text-delay", source: "button-0-text", target: "delay-1", animated: true },
-  { id: "e-delay-interactive", source: "delay-1", target: "interactive-1", animated: true },
-];
+const initialEdges: Edge[] = [];
 
 function readStoredFlow() {
   try {
@@ -1496,6 +1461,7 @@ export function Flows() {
             events: Array.from(new Set([...runtimeEvents, ...current.events])).slice(0, 12),
           };
           localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify(next));
+          syncCurrentFlowSummary(next);
           return next;
         });
       } catch {
@@ -1503,7 +1469,7 @@ export function Flows() {
       }
     }, 3500);
     return () => window.clearInterval(timer);
-  }, [flowRun.messageIds, flowRun.status]);
+  }, [currentFlowId, flowRun.messageIds, flowRun.status]);
 
 
   function rebuildButtonBranches(buttons: string[]) {
@@ -1565,8 +1531,7 @@ export function Flows() {
           : node,
       ),
     );
-    rebuildButtonBranches(nextData.buttons || []);
-    setStatus(`Template "${template.name}" carregado. ${nextData.buttons?.length || 0} saída(s) criada(s).`);
+    setStatus(`Template "${template.name}" carregado. Puxe uma saída do botão para continuar o fluxo.`);
   }
 
   function updateTemplateVariable(variable: string, value: string) {
@@ -1766,15 +1731,14 @@ export function Flows() {
     setStatus("Fluxo salvo localmente.");
   }
 
-  function updateRun(nextRun: FlowRun) {
-    setFlowRun(nextRun);
-    localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify(nextRun));
+  function syncCurrentFlowSummary(nextRun: FlowRun, updatedAt = new Date().toISOString()) {
     if (currentFlowId) {
       setFlowList((current) => {
         const next = current.map((item) =>
           item.id === currentFlowId
             ? {
                 ...item,
+                updatedAt,
                 stats: {
                   total: nextRun.total,
                   sent: nextRun.sent,
@@ -1790,6 +1754,12 @@ export function Flows() {
         return next;
       });
     }
+  }
+
+  function updateRun(nextRun: FlowRun) {
+    setFlowRun(nextRun);
+    localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify(nextRun));
+    syncCurrentFlowSummary(nextRun);
   }
 
   function openFlow(flow: SavedFlowSummary) {
@@ -1864,7 +1834,6 @@ export function Flows() {
     setCreateModalOpen(false);
     setFlowView("editor");
     setStatus("Fluxo criado. Ajuste as variaveis do template e salve para liberar o disparo.");
-    window.setTimeout(() => rebuildButtonBranches(startData.buttons || []), 0);
   }
 
   function deleteFlow(flowId: string) {
