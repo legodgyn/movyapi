@@ -666,7 +666,6 @@ export function Analytics() {
       <section className="analytics-kpi-grid">
         {[
           { label: "Enviados", value: totals.sent, icon: Send, tone: "neutral", detail: "Destinatários do lote" },
-          { label: "Aceitos", value: totals.accepted, icon: CheckCircle2, tone: "primary", detail: "Aceitos pela API" },
           { label: "Entregues", value: totals.delivered, icon: CheckCircle2, tone: "success", detail: `${totals.rate}%` },
           { label: "Falhas", value: totals.failed, icon: XCircle, tone: "danger", detail: `${totals.sent ? Math.round((totals.failed / totals.sent) * 1000) / 10 : 0}%` },
           { label: "Pendentes", value: totals.pending, icon: TrendingUp, tone: "warning", detail: "Aguardando status" },
