@@ -11,6 +11,7 @@ import { Broadcast } from "./pages/Broadcast";
 import { Campaigns } from "./pages/Campaigns";
 import { CloudTemplates } from "./pages/CloudTemplates";
 import { Contacts } from "./pages/Contacts";
+import { Conversations } from "./pages/Conversations";
 import { EmbeddedSignup } from "./pages/EmbeddedSignup";
 import { Flows } from "./pages/Flows";
 import { ListTools } from "./pages/ListTools";
@@ -47,6 +48,7 @@ export function App() {
         <Route path="/" element={<TemplateCreator />} />
         <Route path="/broadcast" element={<Broadcast mode="simple" />} />
         <Route path="/broadcast-random" element={<Broadcast mode="random" />} />
+        <Route path="/conversations" element={<Conversations />} />
         <Route path="/contatos" element={<Contacts />} />
         <Route path="/flows" element={<Flows />} />
         <Route path="/media" element={<Media />} />

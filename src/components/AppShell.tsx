@@ -46,6 +46,10 @@ const titles: Record<string, { title: string; description: string }> = {
     title: "Broadcast Randomico",
     description: "Alterne remetentes e templates automaticamente contato a contato",
   },
+  "/conversations": {
+    title: "Conversas",
+    description: "Inbox por remetente com respostas e status do webhook",
+  },
   "/contatos": {
     title: "Contatos",
     description: "Gerencie seus contatos e tags",

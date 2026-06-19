@@ -6239,6 +6239,294 @@ a {
   margin-top: 6px;
 }
 
+.conversations-page {
+  width: min(1280px, calc(100vw - 320px));
+  margin-inline: auto;
+}
+
+.conversations-heading {
+  margin-bottom: 18px;
+}
+
+.conversations-shell {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  min-height: 680px;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 12% 0%, hsl(var(--md-primary) / .08), transparent 34%),
+    hsl(var(--card) / .74);
+  box-shadow: 0 24px 80px hsl(270 55% 8% / .26);
+}
+
+.conversation-list-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid hsl(var(--border));
+}
+
+.conversation-tools {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--surface-container-low) / .42);
+}
+
+.conversation-filter-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.conversation-filter-row .input {
+  height: 38px;
+  font-size: .8rem;
+}
+
+.conversation-list {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: auto;
+  padding: 8px;
+}
+
+.conversation-list-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: hsl(var(--foreground));
+  background: transparent;
+  text-align: left;
+}
+
+.conversation-list-item:hover,
+.conversation-list-item.active {
+  border-color: hsl(var(--md-primary) / .36);
+  background: hsl(var(--md-primary-container) / .22);
+}
+
+.conversation-avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  color: hsl(var(--md-primary));
+  background: hsl(var(--md-primary-container) / .42);
+}
+
+.conversation-list-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.conversation-list-copy strong {
+  overflow: hidden;
+  font-size: .86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-list-copy small,
+.conversation-list-meta small {
+  overflow: hidden;
+  color: hsl(var(--muted-foreground));
+  font-size: .73rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-list-meta {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.conversation-list-meta i {
+  display: grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 999px;
+  color: hsl(var(--md-on-primary));
+  background: hsl(var(--md-primary));
+  font-size: .68rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.conversation-chat-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.conversation-chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--surface-container-low) / .26);
+}
+
+.conversation-chat-head div {
+  display: grid;
+  gap: 4px;
+}
+
+.conversation-chat-head strong {
+  font-size: 1rem;
+}
+
+.conversation-chat-head span {
+  color: hsl(var(--muted-foreground));
+  font-size: .78rem;
+}
+
+.conversation-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--surface-container) / .7);
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+.conversation-status-pill.delivered,
+.conversation-status-pill.read,
+.conversation-status-pill.received {
+  border-color: hsl(152 70% 45% / .35);
+  color: hsl(152 80% 68%);
+  background: hsl(152 45% 18% / .34);
+}
+
+.conversation-status-pill.failed {
+  border-color: hsl(0 78% 64% / .36);
+  color: hsl(0 92% 78%);
+  background: hsl(0 42% 18% / .36);
+}
+
+.conversation-messages {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  padding: 18px;
+  background:
+    linear-gradient(hsl(var(--background) / .82), hsl(var(--background) / .82)),
+    radial-gradient(circle at 80% 0%, hsl(var(--md-primary) / .08), transparent 36%);
+}
+
+.conversation-bubble {
+  max-width: min(620px, 78%);
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--surface-container) / .72);
+}
+
+.conversation-bubble.outbound {
+  align-self: flex-end;
+  border-color: hsl(var(--md-primary) / .28);
+  background: hsl(var(--md-primary-container) / .46);
+}
+
+.conversation-bubble.inbound {
+  align-self: flex-start;
+  border-color: hsl(164 70% 44% / .24);
+  background: hsl(164 46% 14% / .55);
+}
+
+.conversation-bubble p {
+  margin: 0;
+  color: hsl(var(--foreground));
+  font-size: .86rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.conversation-bubble span {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  margin-top: 7px;
+  color: hsl(var(--muted-foreground));
+  font-size: .68rem;
+}
+
+.conversation-error {
+  display: block;
+  margin-top: 6px;
+  color: hsl(0 92% 78%);
+  font-size: .72rem;
+}
+
+.conversation-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 14px;
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--surface-container-low) / .36);
+}
+
+.conversation-composer textarea {
+  min-height: 44px;
+  max-height: 120px;
+  resize: vertical;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 11px 12px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--input));
+  font: inherit;
+  font-size: .86rem;
+}
+
+.conversation-empty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 9px;
+  height: 100%;
+  color: hsl(var(--muted-foreground));
+  text-align: center;
+}
+
+.conversation-empty strong {
+  color: hsl(var(--foreground));
+  font-size: 1rem;
+}
+
+.conversation-page-status {
+  margin: 12px 0 0;
+  color: hsl(var(--muted-foreground));
+  font-size: .8rem;
+}
+
 .meta-template-page {
   margin: 0 auto;
   max-width: 1220px;

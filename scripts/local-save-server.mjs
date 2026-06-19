@@ -39,6 +39,7 @@ const sisbratelBaseUrl = process.env.SISBRATEL_API_BASE_URL || "https://app.sisb
 const whatsappStatuses = new Map();
 const FLOW_RUNTIME_KEY = "movy.flowRuntime";
 const BROADCAST_ANALYTICS_KEY = "movy.broadcastAnalyticsEvents";
+const CONVERSATION_MESSAGES_KEY = "movy.conversationMessages";
 const graphApiBase = "https://graph.facebook.com/v24.0";
 let lastBroadcastDebug = null;
 
@@ -586,6 +587,296 @@ async function updateBroadcastAnalyticsStatuses(statuses) {
     changed = true;
   }
   if (changed) await writeBroadcastAnalyticsEvents(Array.from(byId.values()));
+}
+
+async function readConversationMessages() {
+  const stored = await getStoredValue(CONVERSATION_MESSAGES_KEY);
+  return Array.isArray(stored) ? stored.filter((item) => item && typeof item === "object") : [];
+}
+
+async function writeConversationMessages(messages) {
+  await setStoredValue(CONVERSATION_MESSAGES_KEY, messages.slice(-100000));
+}
+
+function conversationIdFor(contactPhone, phoneNumberId = "") {
+  return [normalizeBrazilPhone(contactPhone), String(phoneNumberId || "")].filter(Boolean).join(":");
+}
+
+function statusTime(status) {
+  return status.timestamp ? new Date(Number(status.timestamp) * 1000).toISOString() : new Date().toISOString();
+}
+
+function renderTemplateText(template, variables = {}) {
+  let text = templateBodyText(template);
+  const bodyVariables = extractVariablesFromText(text);
+  for (const variable of bodyVariables) {
+    const value = variableValue(variables, variable);
+    const escaped = String(variable).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    text = text.replace(new RegExp(escaped, "g"), value);
+  }
+  return normalizeTemplateParameterText(text);
+}
+
+function inboundTextFromMeta(message) {
+  const record = asRecord(message);
+  const interactive = asRecord(record.interactive);
+  const buttonReply = asRecord(interactive.button_reply);
+  const listReply = asRecord(interactive.list_reply);
+  const button = asRecord(record.button);
+  const text = asRecord(record.text);
+  const type = String(record.type || "");
+  return firstNonEmpty(
+    text.body,
+    buttonReply.title,
+    listReply.title,
+    button.text,
+    asRecord(record.image).caption,
+    asRecord(record.video).caption,
+    asRecord(record.document).caption,
+    type ? `[${type}]` : "Mensagem recebida",
+  );
+}
+
+function conversationMessageFromInbound(value, message) {
+  const metadata = asRecord(value.metadata);
+  const record = asRecord(message);
+  const from = normalizeBrazilPhone(record.from || "");
+  const phoneNumberId = String(metadata.phone_number_id || "");
+  return {
+    id: String(record.id || `in-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+    messageId: String(record.id || ""),
+    provider: "meta",
+    direction: "inbound",
+    conversationId: conversationIdFor(from, phoneNumberId),
+    contactPhone: from,
+    senderPhoneNumberId: phoneNumberId,
+    senderPhone: String(metadata.display_phone_number || ""),
+    senderName: String(metadata.display_phone_number || "Remetente"),
+    text: inboundTextFromMeta(record),
+    type: String(record.type || "text"),
+    status: "received",
+    createdAt: record.timestamp ? new Date(Number(record.timestamp) * 1000).toISOString() : new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    raw: record,
+  };
+}
+
+function collectConversationInboundMessages(payload) {
+  const messages = [];
+  const entries = Array.isArray(payload?.entry) ? payload.entry : [];
+  for (const entry of entries) {
+    const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+    for (const change of changes) {
+      const value = asRecord(change?.value);
+      const rawMessages = Array.isArray(value.messages) ? value.messages : [];
+      for (const message of rawMessages) {
+        const normalized = conversationMessageFromInbound(value, message);
+        if (normalized.contactPhone) messages.push(normalized);
+      }
+    }
+  }
+  return messages;
+}
+
+async function appendConversationMessages(nextMessages) {
+  if (!nextMessages.length) return;
+  const current = await readConversationMessages();
+  const byId = new Map(current.map((message) => [String(message.messageId || message.id), message]));
+  for (const message of nextMessages) {
+    const key = String(message.messageId || message.id);
+    const previous = byId.get(key) || {};
+    byId.set(key, { ...previous, ...message, updatedAt: new Date().toISOString() });
+  }
+  await writeConversationMessages(Array.from(byId.values()));
+}
+
+async function updateConversationStatuses(statuses) {
+  if (!statuses.length) return;
+  const current = await readConversationMessages();
+  const byId = new Map(current.map((message) => [String(message.messageId || message.id), message]));
+  let changed = false;
+  for (const status of statuses) {
+    const key = String(status.id || "");
+    if (!key) continue;
+    const previous = byId.get(key);
+    const statusValue = String(status.status || "").toLowerCase();
+    const eventTime = statusTime(status);
+    const next = {
+      ...(previous || {
+        id: key,
+        messageId: key,
+        provider: "meta",
+        direction: "outbound",
+        contactPhone: normalizeBrazilPhone(status.recipientId || ""),
+        conversationId: conversationIdFor(status.recipientId || ""),
+        text: "Mensagem enviada",
+        type: "template",
+        createdAt: eventTime,
+      }),
+      status: statusValue || previous?.status || "status",
+      recipientPhone: normalizeBrazilPhone(status.recipientId || previous?.recipientPhone || previous?.contactPhone || ""),
+      contactPhone: normalizeBrazilPhone(previous?.contactPhone || status.recipientId || ""),
+      conversationId: previous?.conversationId || conversationIdFor(status.recipientId || previous?.contactPhone || "", previous?.senderPhoneNumberId || ""),
+      errorCode: status.errorCode || previous?.errorCode || "",
+      errorMessage: status.errorMessage || status.errorTitle || previous?.errorMessage || "",
+      deliveredAt: ["delivered", "read"].includes(statusValue) ? eventTime : previous?.deliveredAt || "",
+      readAt: statusValue === "read" ? eventTime : previous?.readAt || "",
+      failedAt: statusValue === "failed" ? eventTime : previous?.failedAt || "",
+      updatedAt: new Date().toISOString(),
+      rawStatus: status.raw || status,
+    };
+    byId.set(key, next);
+    changed = true;
+  }
+  if (changed) await writeConversationMessages(Array.from(byId.values()));
+}
+
+function conversationFromMessages(messages) {
+  const byConversation = new Map();
+  for (const message of messages) {
+    const contactPhone = normalizeBrazilPhone(message.contactPhone || message.recipientPhone || message.from || message.to || "");
+    if (!contactPhone) continue;
+    const senderPhoneNumberId = String(message.senderPhoneNumberId || message.phoneNumberId || "");
+    const id = message.conversationId || conversationIdFor(contactPhone, senderPhoneNumberId);
+    const current = byConversation.get(id) || {
+      id,
+      contactPhone,
+      senderPhoneNumberId,
+      senderPhone: message.senderPhone || "",
+      senderName: message.senderName || "Remetente",
+      lastMessage: "",
+      lastStatus: "",
+      lastAt: "",
+      unread: 0,
+      messages: [],
+    };
+    current.senderPhone = current.senderPhone || message.senderPhone || "";
+    current.senderName = current.senderName || message.senderName || "Remetente";
+    current.messages.push(message);
+    if (message.direction === "inbound" && !message.readByAgentAt) current.unread += 1;
+    const when = message.createdAt || message.updatedAt || "";
+    if (!current.lastAt || new Date(when).getTime() >= new Date(current.lastAt).getTime()) {
+      current.lastAt = when;
+      current.lastMessage = message.text || message.status || "Mensagem";
+      current.lastStatus = message.status || "";
+    }
+    byConversation.set(id, current);
+  }
+  return Array.from(byConversation.values())
+    .map((conversation) => ({
+      ...conversation,
+      messages: conversation.messages.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()),
+    }))
+    .sort((a, b) => new Date(b.lastAt || 0).getTime() - new Date(a.lastAt || 0).getTime());
+}
+
+async function listConversations(params = {}) {
+  const messages = await readConversationMessages();
+  const query = String(params.q || "").trim().toLowerCase();
+  const sender = String(params.sender || "").trim();
+  const filtered = messages.filter((message) => {
+    const haystack = [message.contactPhone, message.senderPhone, message.senderName, message.text, message.status].join(" ").toLowerCase();
+    const senderOk = !sender || sender === "all" || String(message.senderPhoneNumberId || "") === sender;
+    return senderOk && (!query || haystack.includes(query));
+  });
+  const conversations = conversationFromMessages(filtered);
+  const senders = Array.from(
+    new Map(
+      messages
+        .filter((message) => message.senderPhoneNumberId)
+        .map((message) => [
+          String(message.senderPhoneNumberId),
+          {
+            id: String(message.senderPhoneNumberId),
+            name: message.senderName || "Remetente",
+            phone: message.senderPhone || "",
+          },
+        ]),
+    ).values(),
+  );
+  return { ok: true, conversations, senders, total: conversations.length };
+}
+
+async function findSenderCredentials(phoneNumberId) {
+  const storedAccounts = await getStoredValue("scaleapi.bmAccounts");
+  const storedSettings = await getStoredValue("scaleapi.bmSettings");
+  const storedConnected = await getStoredValue("movy.connectedSenders");
+  const accounts = [
+    ...(Array.isArray(storedAccounts) ? storedAccounts : storedAccounts ? [storedAccounts] : []),
+    ...(storedSettings ? [storedSettings] : []),
+  ].filter((item) => item && typeof item === "object");
+  const connected = Array.isArray(storedConnected) ? storedConnected : [];
+  const connectedSender = connected.find((sender) => String(sender.phoneNumberId || "") === String(phoneNumberId || ""));
+  const account = accounts.find((item) => {
+    const phones = Array.isArray(item.phones) ? item.phones : [];
+    return (
+      String(item.defaultPhoneNumberId || "") === String(phoneNumberId || "") ||
+      phones.some((phone) => String(phone.id || "") === String(phoneNumberId || "")) ||
+      (Array.isArray(item.connectedPhoneIds) && item.connectedPhoneIds.map(String).includes(String(phoneNumberId || ""))) ||
+      (connectedSender && (String(item.defaultWabaId || "") === String(connectedSender.wabaId || "") || String(item.id || "") === String(connectedSender.bmId || "")))
+    );
+  });
+  return {
+    accessToken: String(account?.accessToken || ""),
+    phoneNumberId: String(phoneNumberId || account?.defaultPhoneNumberId || ""),
+    senderName: connectedSender?.verifiedName || connectedSender?.bmName || account?.name || account?.businessName || "Remetente",
+    senderPhone: connectedSender?.phone || "",
+  };
+}
+
+async function handleConversations(request, response) {
+  const url = new URL(request.url || "", `http://${request.headers.host}`);
+  if (request.method === "GET" && url.pathname === "/conversations") {
+    sendJson(response, 200, await listConversations(Object.fromEntries(url.searchParams.entries())));
+    return true;
+  }
+  if (request.method === "POST" && url.pathname === "/conversations/send") {
+    const body = JSON.parse((await readRequestBody(request)).toString("utf8") || "{}");
+    const to = normalizeBrazilPhone(body.to || body.contactPhone || "");
+    const text = String(body.text || "").trim();
+    const phoneNumberId = String(body.phoneNumberId || body.senderPhoneNumberId || "").trim();
+    if (!to || !text || !phoneNumberId) {
+      sendJson(response, 400, { ok: false, error: "missing-message-fields", message: "Informe remetente, contato e texto." });
+      return true;
+    }
+    const credentials = await findSenderCredentials(phoneNumberId);
+    if (!credentials.accessToken) {
+      sendJson(response, 400, { ok: false, error: "missing-sender-token", message: "Nao encontrei token da BM para esse remetente." });
+      return true;
+    }
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to,
+      type: "text",
+      text: { preview_url: false, body: normalizeTemplateParameterText(text) },
+    };
+    const result = await sendCloudMessage(phoneNumberId, credentials.accessToken, payload);
+    const createdAt = new Date().toISOString();
+    await appendConversationMessages([
+      {
+        id: result.messageId,
+        messageId: result.messageId,
+        provider: "meta",
+        direction: "outbound",
+        conversationId: conversationIdFor(to, phoneNumberId),
+        contactPhone: to,
+        recipientPhone: to,
+        senderPhoneNumberId: phoneNumberId,
+        senderPhone: credentials.senderPhone,
+        senderName: credentials.senderName,
+        text: normalizeTemplateParameterText(text),
+        type: "text",
+        status: "accepted",
+        createdAt,
+        updatedAt: createdAt,
+        raw: result.data,
+      },
+    ]);
+    sendJson(response, 200, { ok: true, messageId: result.messageId });
+    return true;
+  }
+  return false;
 }
 
 function dateFromPeriod(period) {
@@ -1353,6 +1644,7 @@ async function dispatchBroadcast(request, response) {
     const messageIds = [];
     const debugMessages = [];
     const analyticsEvents = [];
+    const conversationEvents = [];
     for (const recipient of recipientRows) {
       const recipientRecord = asRecord(recipient);
       const phone = normalizeBrazilPhone(recipientRecord.phone || recipientRecord.telefone || recipientRecord.whatsapp);
@@ -1396,6 +1688,29 @@ async function dispatchBroadcast(request, response) {
         const result = await sendCloudMessage(rowPhoneNumberId, rowToken, messagePayload);
         const flowSessionId = await registerFlowSession(payload, { ...recipientRecord, phone, accessToken: rowToken, phoneNumberId: rowPhoneNumberId }, lot, result.messageId);
         messageIds.push(result.messageId);
+        const lotTemplate = asRecord(asRecord(lot).template);
+        const outboundText = renderTemplateText(lotTemplate, asRecord(recipientRecord.variables || lotTemplate.variables));
+        const senderName = senderAnalyticsName(lotSender, recipientRecord.senderName || senderAnalyticsName(sender));
+        conversationEvents.push({
+          id: result.messageId,
+          messageId: result.messageId,
+          provider: "meta",
+          direction: "outbound",
+          conversationId: conversationIdFor(phone, rowPhoneNumberId),
+          contactPhone: phone,
+          recipientPhone: phone,
+          senderPhoneNumberId: rowPhoneNumberId,
+          senderPhone: firstNonEmpty(lotSender.phoneNumber, lotSender.phone, sender.phoneNumber, sender.phone),
+          senderName,
+          text: outboundText || `Template ${messagePayload.template.name}`,
+          type: "template",
+          templateName: messagePayload.template.name,
+          status: "accepted",
+          campaignName: firstNonEmpty(asRecord(payload.campaign).name, payload.campaignName, payload.name),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          raw: result.data,
+        });
         analyticsEvents.push({
           ...broadcastAnalyticsContext(payload, recipientRecord, lot, phone, result.messageId),
           status: "accepted",
@@ -1430,6 +1745,7 @@ async function dispatchBroadcast(request, response) {
     const accepted = results.filter((item) => item.status === "accepted").length;
     const failed = results.filter((item) => item.status === "failed").length;
     await appendBroadcastAnalyticsEvents(analyticsEvents);
+    await appendConversationMessages(conversationEvents);
     lastBroadcastDebug = {
       at: new Date().toISOString(),
       phoneNumberId,
@@ -1766,6 +2082,10 @@ createServer(async (request, response) => {
     return;
   }
 
+  if (request.url?.startsWith("/conversations")) {
+    if (await handleConversations(request, response)) return;
+  }
+
   if (request.method === "GET" && request.url?.startsWith("/meta/webhook")) {
     const url = new URL(request.url || "", `http://${request.headers.host}`);
     const challenge = url.searchParams.get("hub.challenge") || "";
@@ -1788,7 +2108,10 @@ createServer(async (request, response) => {
       const payload = JSON.parse(body.toString("utf8") || "{}");
       const statuses = collectWhatsAppStatuses(payload);
       await updateBroadcastAnalyticsStatuses(statuses);
+      await updateConversationStatuses(statuses);
       const incomingMessages = normalizeIncomingMessages(payload);
+      const conversationInbound = collectConversationInboundMessages(payload);
+      await appendConversationMessages(conversationInbound);
       const flowRoutes = await processFlowIncomingMessages(incomingMessages);
       if (statuses.length) {
         console.log(
