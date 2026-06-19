@@ -57,9 +57,12 @@ function movyBackendUrl() {
   if (typeof window !== "undefined" && /localhost|127\.0\.0\.1/.test(window.location.hostname)) {
     return config.localBackendUrl.replace(/\/$/, "");
   }
+  if (typeof window !== "undefined" && window.location.origin) {
+    return `${window.location.origin.replace(/\/$/, "")}/local-api`;
+  }
   const apiUrl = config.apiUrl.replace(/\/api\/v1\/?$/, "").replace(/\/$/, "");
   if (/localhost|127\.0\.0\.1/.test(apiUrl)) return config.localBackendUrl.replace(/\/$/, "");
-  return apiUrl;
+  return `${config.publicAppUrl.replace(/\/$/, "")}/local-api`;
 }
 
 function productionBackendUrl() {
