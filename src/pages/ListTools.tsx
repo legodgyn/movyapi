@@ -3,6 +3,7 @@ import { AlertTriangle, Ban, Check, CheckCircle2, Clipboard, Clock3, Cloud, Down
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import { config } from "../lib/config";
+import { contacts } from "../lib/services";
 
 const LOCAL_CONTACTS_KEY = "scaleapi.localContacts";
 const CHECKNUMBER_API_BASE = `${config.localBackendUrl.replace(/\/$/, "")}/checknumber`;
@@ -443,6 +444,17 @@ function publishRowsToContacts(rows: ListRow[]) {
   return {
     tags: grouped.size,
     contacts: Array.from(grouped.values()).reduce((sum, phones) => sum + phones.size, 0),
+  };
+}
+
+async function publishRowsToContactsApi(rows: ListRow[], filename: string) {
+  const csv = createCsv(rows);
+  const file = new File([csv], filename, { type: "text/csv;charset=utf-8" });
+  await contacts.importCsv(file);
+
+  return {
+    tags: new Set(rows.map((row) => normalizeCell(row.etiqueta) || "Importados")).size,
+    contacts: rows.length,
   };
 }
 
@@ -1402,6 +1414,7 @@ function RetryPage() {
   const [status, setStatus] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [download, setDownload] = useState<{ csv: string; url: string; filename: string } | null>(null);
+  const [retryRows, setRetryRows] = useState<ListRow[]>([]);
   const [retryStats, setRetryStats] = useState<RetryStats | null>(null);
 
   const canProcess = (files.length > 0 || pastedNumbers.trim().length > 0) && prefix.trim().length > 0 && !isProcessing;
@@ -1438,6 +1451,7 @@ function RetryPage() {
       URL.revokeObjectURL(download.url);
       setDownload(null);
     }
+    setRetryRows([]);
     setRetryStats(null);
 
     try {
@@ -1480,6 +1494,7 @@ function RetryPage() {
       const csv = createCsv(retryRows);
       const url = createCsvUrl(csv);
       setDownload({ csv, url, filename });
+      setRetryRows(retryRows);
       setRetryStats({
         totalFound: phones.length,
         generated: retryRows.length,
@@ -1495,6 +1510,32 @@ function RetryPage() {
     } finally {
       setIsProcessing(false);
     }
+  }
+
+  async function publishRetryRows() {
+    if (!retryRows.length || !download) {
+      setStatus("Gere as retentativas antes de subir para o Broadcast.");
+      return;
+    }
+
+    setStatus("Subindo retentativas para o Broadcast...");
+    try {
+      const result = await publishRowsToContactsApi(retryRows, download.filename);
+      setStatus(`${result.contacts.toLocaleString("pt-BR")} contato(s) publicados no banco em ${result.tags} etiqueta(s).`);
+    } catch {
+      const result = publishRowsToContacts(retryRows);
+      setStatus(`API indisponivel. Publiquei localmente ${result.contacts.toLocaleString("pt-BR")} contato(s) em ${result.tags} etiqueta(s).`);
+    }
+  }
+
+  function clearRetryPage() {
+    setFiles([]);
+    setPastedNumbers("");
+    setStatus("");
+    setRetryRows([]);
+    setRetryStats(null);
+    if (download) URL.revokeObjectURL(download.url);
+    setDownload(null);
   }
 
   return (
@@ -1635,24 +1676,18 @@ function RetryPage() {
           <>
             <button
               className="button secondary process-list-button"
-              onClick={async () => {
-                try {
-                  const result = await saveCsvLocally(download.csv, download.filename);
-                  setStatus(`Retentativas salvas em ${result.path} (${result.bytes} bytes).`);
-                } catch {
-                  try {
-                    await saveCsvToDisk(download.csv, download.filename);
-                    setStatus("Retentativas salvas no computador.");
-                  } catch {
-                    triggerDownload(download.url, download.filename);
-                    setStatus("Não consegui salvar direto. Use Copiar CSV como alternativa.");
-                  }
-                }
+              onClick={() => {
+                triggerDownload(download.url, download.filename);
+                setStatus("Download do CSV de retentativas iniciado.");
               }}
               type="button"
             >
               <Download size={17} />
               Baixar CSV retentativas
+            </button>
+            <button className="button secondary process-list-button" onClick={publishRetryRows} type="button">
+              <Cloud size={17} />
+              Subir para Broadcast
             </button>
             <button
               className="button secondary process-list-button"
@@ -1664,6 +1699,10 @@ function RetryPage() {
             >
               <Clipboard size={17} />
               Copiar CSV
+            </button>
+            <button className="button ghost process-list-button" onClick={clearRetryPage} type="button">
+              <Trash2 size={17} />
+              Limpar
             </button>
           </>
         ) : null}
@@ -1681,7 +1720,13 @@ function RetryPage() {
                 <p>{download.filename} • {new TextEncoder().encode(download.csv.replace(/^\ufeff/, "")).byteLength} bytes</p>
               </div>
             </div>
-            <span className="retry-success-pill">Pronto para download</span>
+            <div className="button-row">
+              <span className="retry-success-pill">Pronto para download</span>
+              <button className="button secondary" onClick={publishRetryRows} type="button">
+                <Cloud size={16} />
+                Subir para Broadcast
+              </button>
+            </div>
           </div>
           <div className="csv-compact-preview">
             <span>Preview do arquivo:</span>
