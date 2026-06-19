@@ -868,7 +868,14 @@ async function listConversations(params = {}) {
           ]),
       ].filter(([id]) => id),
     ).values(),
-  );
+  ).map((sender) => {
+    const related = messages.find((message) => String(message.senderPhoneNumberId || "") === String(sender.id || ""));
+    return {
+      ...sender,
+      name: firstNonEmpty(sender.name, related?.senderName, related?.senderPhone, "Remetente"),
+      phone: firstNonEmpty(sender.phone, related?.senderPhone, related?.senderName),
+    };
+  });
   return { ok: true, conversations, senders, total: conversations.length };
 }
 

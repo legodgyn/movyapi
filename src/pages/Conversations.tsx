@@ -142,8 +142,9 @@ function readLocalArray(key: string) {
   }
 }
 
-function textOf(value: unknown, fallback = "") {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+function textOf(...values: unknown[]) {
+  const found = values.find((value) => typeof value === "string" && value.trim());
+  return typeof found === "string" ? found.trim() : "";
 }
 
 function localSenderOptions() {
@@ -190,9 +191,30 @@ function localSenderOptions() {
   return Array.from(new Map(options.filter((item) => item.id).map((item) => [item.id, item])).values());
 }
 
-function mergeSenderOptions(remote: unknown) {
+function conversationSenderOptions(conversations: Conversation[]) {
+  return conversations
+    .filter((conversation) => conversation.senderPhoneNumberId)
+    .map((conversation) => ({
+      id: conversation.senderPhoneNumberId,
+      name: textOf(conversation.senderName, conversation.senderPhone, "Remetente"),
+      phone: textOf(conversation.senderPhone, conversation.senderName),
+    }));
+}
+
+function mergeSenderOptions(remote: unknown, conversations: Conversation[] = []) {
   const remoteOptions = Array.isArray(remote) ? (remote as SenderOption[]) : [];
-  return Array.from(new Map([...remoteOptions, ...localSenderOptions()].filter((item) => item.id).map((item) => [item.id, item])).values());
+  const byId = new Map<string, SenderOption>();
+  [...remoteOptions, ...conversationSenderOptions(conversations), ...localSenderOptions()].forEach((item) => {
+    const id = textOf(item.id);
+    if (!id) return;
+    const current = byId.get(id);
+    byId.set(id, {
+      id,
+      name: textOf(current?.name, item.name, item.phone, "Remetente"),
+      phone: textOf(current?.phone, item.phone),
+    });
+  });
+  return Array.from(byId.values());
 }
 
 export function Conversations() {
@@ -237,7 +259,7 @@ export function Conversations() {
       let activeBackendUrl = primaryBackendUrl;
       let nextPayload = payload;
       let next = Array.isArray(nextPayload.conversations) ? nextPayload.conversations : [];
-      let nextSenders = mergeSenderOptions(nextPayload.senders);
+      let nextSenders = mergeSenderOptions(nextPayload.senders, next);
       if (isLocalHost() && !next.length) {
         const fallbackUrl = new URL(`${productionBackendUrl()}/conversations`);
         if (query.trim()) fallbackUrl.searchParams.set("q", query.trim());
@@ -248,7 +270,7 @@ export function Conversations() {
           activeBackendUrl = productionBackendUrl();
           nextPayload = fallbackPayload;
           next = Array.isArray(nextPayload.conversations) ? nextPayload.conversations : [];
-          nextSenders = mergeSenderOptions(nextPayload.senders);
+          nextSenders = mergeSenderOptions(nextPayload.senders, next);
         }
       }
       setConversationBackendUrl(activeBackendUrl);
