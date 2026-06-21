@@ -3037,6 +3037,185 @@ a {
   padding: 12px;
 }
 
+.retry-source-tabs {
+  align-items: center;
+  background: hsl(var(--card) / .58);
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  display: inline-flex;
+  gap: 6px;
+  margin: 0 0 16px;
+  padding: 5px;
+}
+
+.retry-source-tabs button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 900;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+.retry-source-tabs button.active {
+  background: hsl(var(--primary) / .18);
+  color: hsl(var(--foreground));
+}
+
+.retry-system-card,
+.retry-settings-inline {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.retry-card-title-row,
+.retry-selection-actions {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.retry-card-title-row h2 {
+  margin-bottom: 6px;
+}
+
+.retry-system-toolbar,
+.retry-inline-settings-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 170px 1fr 1fr minmax(260px, 1.35fr);
+}
+
+.retry-inline-settings-grid {
+  align-items: end;
+  grid-template-columns: 180px minmax(220px, 1fr) minmax(240px, 1.1fr);
+}
+
+.retry-search-field .input-with-icon {
+  align-items: center;
+  background: hsl(var(--input));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  display: flex;
+  gap: 9px;
+  padding: 0 12px;
+}
+
+.retry-search-field .input-with-icon .input {
+  background: transparent;
+  border: 0;
+  min-height: 38px;
+  padding-left: 0;
+}
+
+.retry-system-summary {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.retry-system-summary span {
+  background: hsl(var(--primary) / .08);
+  border: 1px solid hsl(var(--primary) / .16);
+  border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 900;
+  padding: 10px 12px;
+}
+
+.retry-selection-actions {
+  justify-content: flex-end;
+}
+
+.retry-failure-list {
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  display: grid;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.retry-failure-row {
+  align-items: center;
+  background: hsl(var(--background) / .32);
+  border-bottom: 1px solid hsl(var(--border) / .75);
+  cursor: pointer;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto 150px minmax(180px, 1.2fr) minmax(150px, .9fr) minmax(220px, 1.3fr) 150px;
+  min-height: 72px;
+  padding: 12px 14px;
+}
+
+.retry-failure-row:last-child {
+  border-bottom: 0;
+}
+
+.retry-failure-row:hover,
+.retry-failure-row.selected {
+  background: hsl(var(--primary) / .09);
+}
+
+.retry-failure-row input {
+  accent-color: hsl(var(--primary));
+}
+
+.retry-failure-row strong,
+.retry-failure-row small,
+.retry-failure-error,
+.retry-failure-phone {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.retry-failure-row small {
+  color: hsl(var(--muted-foreground));
+  display: block;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.retry-failure-phone {
+  color: hsl(var(--foreground));
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 900;
+}
+
+.retry-failure-error {
+  color: hsl(var(--danger));
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.retry-empty-state {
+  align-items: center;
+  color: hsl(var(--muted-foreground));
+  display: grid;
+  justify-items: center;
+  min-height: 190px;
+  padding: 28px;
+  text-align: center;
+}
+
+.retry-empty-state strong {
+  color: hsl(var(--foreground));
+  margin-top: 8px;
+}
+
+.checkbox-stack.compact {
+  align-self: stretch;
+}
+
 .retry-step {
   align-items: center;
   background: hsl(var(--muted) / .35);
@@ -7192,6 +7371,9 @@ a {
   .retry-flow-card,
   .retry-layout,
   .retry-dashboard,
+  .retry-system-toolbar,
+  .retry-system-summary,
+  .retry-inline-settings-grid,
   .media-stats,
   .media-item,
   .contacts-layout,
@@ -7231,8 +7413,20 @@ a {
 
   .distribution-card,
   .template-select-row,
-  .tag-card {
+  .tag-card,
+  .retry-failure-row {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .retry-card-title-row,
+  .retry-selection-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .retry-failure-row .retry-failure-error,
+  .retry-failure-row > small {
+    grid-column: 2;
   }
 
   .distribution-card > svg,

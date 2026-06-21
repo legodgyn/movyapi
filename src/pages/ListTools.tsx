@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Ban, Check, CheckCircle2, Clipboard, Clock3, Cloud, Download, FileText, Loader2, Play, Radio, RefreshCcw, Settings, ShieldCheck, Sparkles, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, Ban, Check, CheckCircle2, Clipboard, Clock3, Cloud, Download, FileText, Filter, Loader2, Play, Radio, RefreshCcw, Search, Settings, ShieldCheck, Sparkles, Trash2, Upload, XCircle } from "lucide-react";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import { config } from "../lib/config";
@@ -32,6 +32,24 @@ type RetryStats = {
   duplicates: number;
   invalidPhones: number;
   labels: number;
+};
+type RetrySourceTab = "system" | "manual";
+type SystemRetryCandidate = {
+  id: string;
+  phone: string;
+  campaignName: string;
+  bm: string;
+  sender: string;
+  templateName: string;
+  error: string;
+  status: string;
+  createdAt: string;
+  source: string;
+};
+type SystemRetryOptions = {
+  bms: string[];
+  senders: string[];
+  users: string[];
 };
 type CheckStatus = "idle" | "creating" | "polling" | "downloading" | "done" | "error";
 type TreatListTab = "process" | "history";
@@ -445,6 +463,148 @@ function publishRowsToContacts(rows: ListRow[]) {
     tags: grouped.size,
     contacts: Array.from(grouped.values()).reduce((sum, phones) => sum + phones.size, 0),
   };
+}
+
+function movyBackendUrl() {
+  const configured = config.mediaBackendUrl || config.localBackendUrl;
+  if (/^https?:\/\//i.test(configured)) return configured.replace(/\/$/, "");
+  const origin =
+    typeof window !== "undefined" && window.location.origin && !window.location.origin.includes("localhost")
+      ? window.location.origin
+      : config.publicAppUrl;
+  return `${origin.replace(/\/$/, "")}/${configured.replace(/^\/+|\/+$/g, "")}`;
+}
+
+function asRecord(value: unknown) {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function textFrom(record: Record<string, unknown>, keys: string[], fallback = "") {
+  for (const key of keys) {
+    const value = record[key];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value);
+  }
+  return fallback;
+}
+
+function isFailureStatus(record: Record<string, unknown>) {
+  const status = normalizeHeader(textFrom(record, ["status", "deliveryStatus", "messageStatus"]));
+  const error = textFrom(record, ["errorMessage", "error", "reason", "failureReason", "lastError"]);
+  const failedAt = textFrom(record, ["failedAt", "failureAt"]);
+  const errorCode = textFrom(record, ["errorCode", "code"]);
+  return Boolean(
+    failedAt ||
+      error ||
+      errorCode ||
+      ["failed", "fail", "error", "undelivered", "rejected"].some((word) => status.includes(word)),
+  );
+}
+
+function candidatePhoneFrom(record: Record<string, unknown>) {
+  return normalizeBrazilPhone(
+    textFrom(record, ["recipient", "to", "phone", "telefone", "wa_id", "customerPhone", "recipientPhone", "contactPhone"]) ||
+      findFirstPhoneValue(record as ListRow),
+  );
+}
+
+function candidateFromRecord(record: Record<string, unknown>, index: number, source = "Sistema"): SystemRetryCandidate | null {
+  const phone = candidatePhoneFrom(record);
+  if (!phone) return null;
+  const error = textFrom(record, ["errorMessage", "error", "reason", "failureReason", "lastError"], "Falha registrada no envio");
+  const status = textFrom(record, ["status", "deliveryStatus", "messageStatus"], error ? "failed" : "pending");
+  const campaignName = textFrom(record, ["campaignName", "campaign", "flowName", "name"], source);
+  const sender = textFrom(record, ["sender", "senderName", "phoneName"], "Remetente");
+  const bm = textFrom(record, ["bm", "businessName", "wabaName"], "BM");
+  const templateName = textFrom(record, ["templateName", "template", "templateId"], "-");
+  const createdAt = textFrom(record, ["failedAt", "updatedAt", "createdAt", "sentAt"], "");
+  const id = textFrom(record, ["id", "messageId", "wamid"], `${source}-${phone}-${index}-${createdAt}`);
+
+  return {
+    id,
+    phone,
+    campaignName,
+    bm,
+    sender,
+    templateName,
+    error,
+    status,
+    createdAt,
+    source,
+  };
+}
+
+function dedupeCandidates(candidates: SystemRetryCandidate[]) {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = `${candidate.phone}|${candidate.campaignName}|${candidate.error}|${candidate.createdAt}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function parseSystemRetryCandidates(payload: unknown) {
+  const root = asRecord(payload);
+  const candidates: SystemRetryCandidate[] = [];
+  const groups = Array.isArray(root.data) ? root.data : [];
+
+  groups.forEach((group, groupIndex) => {
+    const record = asRecord(group);
+    const messages = Array.isArray(record.messages) ? record.messages : [];
+    messages.forEach((message, index) => {
+      const messageRecord = asRecord(message);
+      if (!isFailureStatus(messageRecord)) return;
+      const candidate = candidateFromRecord(
+        { ...record, ...messageRecord, campaignName: textFrom(messageRecord, ["campaignName"], textFrom(record, ["campaignName"], "Campanha sem nome")) },
+        groupIndex * 1000 + index,
+        textFrom(messageRecord, ["mode", "channel"], "Broadcast"),
+      );
+      if (candidate) candidates.push(candidate);
+    });
+  });
+
+  const events = Array.isArray(root.events) ? root.events : [];
+  events.forEach((event, index) => {
+    const record = asRecord(event);
+    if (!isFailureStatus(record)) return;
+    const candidate = candidateFromRecord(record, index, "Webhook");
+    if (candidate) candidates.push(candidate);
+  });
+
+  const reports = Array.isArray(root.reports) ? root.reports : [];
+  reports.forEach((report, index) => {
+    const record = asRecord(report);
+    const failed = Number(textFrom(record, ["failed", "failures"], "0"));
+    const explicitPhones =
+      (Array.isArray(record.failedPhones) && record.failedPhones) ||
+      (Array.isArray(record.failurePhones) && record.failurePhones) ||
+      (Array.isArray(record.errorPhones) && record.errorPhones) ||
+      [];
+    if (failed <= 0 && explicitPhones.length === 0) return;
+    explicitPhones.forEach((phone, phoneIndex) => {
+      const candidate = candidateFromRecord(
+        { ...record, recipient: phone, errorMessage: textFrom(record, ["errorMessage", "error"], "Falha registrada no relatorio") },
+        index * 1000 + phoneIndex,
+        "Relatorio",
+      );
+      if (candidate) candidates.push(candidate);
+    });
+  });
+
+  return dedupeCandidates(candidates);
+}
+
+async function fetchRetryAnalytics(filters: Record<string, string>) {
+  const url = new URL(`${movyBackendUrl()}/analytics/transmissions`);
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value) url.searchParams.set(key, value);
+  });
+  const response = await fetch(url.toString());
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `Analytics retornou HTTP ${response.status}`);
+  }
+  return payload as Record<string, unknown>;
 }
 
 async function publishRowsToContactsApi(rows: ListRow[], filename: string) {
@@ -1405,6 +1565,7 @@ function TreatListPage() {
 }
 
 function RetryPage() {
+  const [sourceTab, setSourceTab] = useState<RetrySourceTab>("system");
   const [files, setFiles] = useState<File[]>([]);
   const [pastedNumbers, setPastedNumbers] = useState("");
   const [rowsPerLabel, setRowsPerLabel] = useState(5000);
@@ -1413,13 +1574,29 @@ function RetryPage() {
   const [discardInvalidPhones, setDiscardInvalidPhones] = useState(true);
   const [status, setStatus] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isLoadingSystem, setIsLoadingSystem] = useState(false);
+  const [systemPeriod, setSystemPeriod] = useState("Ultimos 7 dias");
+  const [systemBm, setSystemBm] = useState("");
+  const [systemSender, setSystemSender] = useState("");
+  const [systemSearch, setSystemSearch] = useState("");
+  const [systemOptions, setSystemOptions] = useState<SystemRetryOptions>({ bms: [], senders: [], users: [] });
+  const [systemCandidates, setSystemCandidates] = useState<SystemRetryCandidate[]>([]);
+  const [selectedSystemIds, setSelectedSystemIds] = useState<Set<string>>(new Set());
   const [download, setDownload] = useState<{ csv: string; url: string; filename: string } | null>(null);
   const [retryRows, setRetryRows] = useState<ListRow[]>([]);
   const [retryStats, setRetryStats] = useState<RetryStats | null>(null);
 
   const canProcess = (files.length > 0 || pastedNumbers.trim().length > 0) && prefix.trim().length > 0 && !isProcessing;
   const pastedPreviewCount = extractPhonesFromText(pastedNumbers).length;
-  const activeStage = isProcessing ? 2 : download ? 3 : files.length || pastedNumbers.trim() ? 1 : 0;
+  const activeStage = isProcessing ? 2 : download ? 3 : files.length || pastedNumbers.trim() || systemCandidates.length ? 1 : 0;
+  const filteredSystemCandidates = systemCandidates.filter((candidate) => {
+    const search = normalizeHeader(systemSearch);
+    if (!search) return true;
+    return [candidate.phone, candidate.campaignName, candidate.bm, candidate.sender, candidate.templateName, candidate.error]
+      .map(normalizeHeader)
+      .some((value) => value.includes(search));
+  });
+  const selectedSystemCount = filteredSystemCandidates.filter((candidate) => selectedSystemIds.has(candidate.id)).length;
 
   async function collectPhones() {
     const fromFiles = (
@@ -1442,11 +1619,7 @@ function RetryPage() {
     return [...fromFiles, ...extractPhonesFromText(pastedNumbers)];
   }
 
-  async function handleRetryProcess() {
-    if (!canProcess) return;
-
-    setIsProcessing(true);
-    setStatus("Gerando retentativas...");
+  function buildRetryFromPhones(phones: string[], sourceLabel = "retentativas") {
     if (download) {
       URL.revokeObjectURL(download.url);
       setDownload(null);
@@ -1454,64 +1627,137 @@ function RetryPage() {
     setRetryRows([]);
     setRetryStats(null);
 
-    try {
-      const phones = await collectPhones();
-      const seenPhones = new Set<string>();
-      const stats = {
-        duplicates: 0,
-        invalidPhones: 0,
-      };
-      const today = new Date();
-      const dateCode = `${String(today.getDate()).padStart(2, "0")}${String(today.getMonth() + 1).padStart(2, "0")}`;
-      const retryRows: ListRow[] = [];
+    const seenPhones = new Set<string>();
+    const stats = {
+      duplicates: 0,
+      invalidPhones: 0,
+    };
+    const today = new Date();
+    const dateCode = `${String(today.getDate()).padStart(2, "0")}${String(today.getMonth() + 1).padStart(2, "0")}`;
+    const preparedRows: ListRow[] = [];
 
-      for (const phone of phones) {
-        if (discardInvalidPhones && !isValidBrazilPhone(phone)) {
-          stats.invalidPhones += 1;
+    for (const rawPhone of phones) {
+      const phone = normalizeBrazilPhone(rawPhone);
+      if (discardInvalidPhones && !isValidBrazilPhone(phone)) {
+        stats.invalidPhones += 1;
+        continue;
+      }
+      if (removeDuplicates && phone) {
+        if (seenPhones.has(phone)) {
+          stats.duplicates += 1;
           continue;
         }
-        if (removeDuplicates && phone) {
-          if (seenPhones.has(phone)) {
-            stats.duplicates += 1;
-            continue;
-          }
-          seenPhones.add(phone);
-        }
-
-        const tagIndex = Math.floor(retryRows.length / Math.max(rowsPerLabel, 1)) + 1;
-        retryRows.push({
-          telefone: phone,
-          etiqueta: `${prefix.trim()} ${dateCode} - ${tagIndex}`,
-        });
+        seenPhones.add(phone);
       }
 
-      if (retryRows.length === 0) {
-        setStatus("Nenhum telefone válido encontrado para gerar retentativa.");
-        return;
-      }
-
-      const filename = `${prefix.trim().replace(/\s+/g, "-").toLowerCase()}-retentativas.csv`;
-      const csv = createCsv(retryRows);
-      const url = createCsvUrl(csv);
-      setDownload({ csv, url, filename });
-      setRetryRows(retryRows);
-      setRetryStats({
-        totalFound: phones.length,
-        generated: retryRows.length,
-        duplicates: stats.duplicates,
-        invalidPhones: stats.invalidPhones,
-        labels: Math.ceil(retryRows.length / Math.max(rowsPerLabel, 1)),
+      const tagIndex = Math.floor(preparedRows.length / Math.max(rowsPerLabel, 1)) + 1;
+      preparedRows.push({
+        telefone: phone,
+        etiqueta: `${prefix.trim()} ${dateCode} - ${tagIndex}`,
       });
-      setStatus(
-        `${retryRows.length} retentativas geradas. ${removeDuplicates ? `${stats.duplicates} duplicados removidos` : "duplicados mantidos"}, ${discardInvalidPhones ? `${stats.invalidPhones} inválidos removidos` : "inválidos mantidos"}.`,
-      );
+    }
+
+    if (preparedRows.length === 0) {
+      setStatus("Nenhum telefone valido encontrado para gerar retentativa.");
+      return false;
+    }
+
+    const filename = `${prefix.trim().replace(/\s+/g, "-").toLowerCase()}-retentativas.csv`;
+    const csv = createCsv(preparedRows);
+    const url = createCsvUrl(csv);
+    setDownload({ csv, url, filename });
+    setRetryRows(preparedRows);
+    setRetryStats({
+      totalFound: phones.length,
+      generated: preparedRows.length,
+      duplicates: stats.duplicates,
+      invalidPhones: stats.invalidPhones,
+      labels: Math.ceil(preparedRows.length / Math.max(rowsPerLabel, 1)),
+    });
+    setStatus(
+      `${preparedRows.length.toLocaleString("pt-BR")} ${sourceLabel} geradas. ${removeDuplicates ? `${stats.duplicates} duplicados removidos` : "duplicados mantidos"}, ${discardInvalidPhones ? `${stats.invalidPhones} invalidos removidos` : "invalidos mantidos"}.`,
+    );
+    return true;
+  }
+
+  async function handleRetryProcess() {
+    if (!canProcess) return;
+
+    setIsProcessing(true);
+    setStatus("Gerando retentativas...");
+
+    try {
+      const phones = await collectPhones();
+      buildRetryFromPhones(phones, "retentativas");
     } catch {
-      setStatus("Não foi possível gerar retentativas. Confira o arquivo ou texto informado.");
+      setStatus("Nao foi possivel gerar retentativas. Confira o arquivo ou texto informado.");
     } finally {
       setIsProcessing(false);
     }
   }
 
+  async function fetchSystemFailures() {
+    setIsLoadingSystem(true);
+    setStatus("Buscando falhas dos disparos...");
+    try {
+      const payload = await fetchRetryAnalytics({
+        period: systemPeriod,
+        bm: systemBm,
+        sender: systemSender,
+      });
+      const options = asRecord(payload.options);
+      const bms = Array.isArray(options.bms) ? options.bms.map(String) : [];
+      const senders = Array.isArray(options.senders) ? options.senders.map(String) : [];
+      const users = Array.isArray(options.users) ? options.users.map(String) : [];
+      const candidates = parseSystemRetryCandidates(payload);
+      setSystemOptions({ bms, senders, users });
+      setSystemCandidates(candidates);
+      setSelectedSystemIds(new Set(candidates.map((candidate) => candidate.id)));
+      setStatus(
+        candidates.length
+          ? `${candidates.length.toLocaleString("pt-BR")} falha(s) encontradas para retentativa.`
+          : "Nenhuma falha encontrada no periodo selecionado.",
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Nao foi possivel consultar as falhas do sistema.");
+    } finally {
+      setIsLoadingSystem(false);
+    }
+  }
+
+  function generateFromSystemFailures() {
+    const phones = systemCandidates.filter((candidate) => selectedSystemIds.has(candidate.id)).map((candidate) => candidate.phone);
+    if (!phones.length) {
+      setStatus("Selecione pelo menos uma falha para gerar a retentativa.");
+      return;
+    }
+    buildRetryFromPhones(phones, "falhas");
+  }
+
+  function toggleSystemCandidate(id: string) {
+    setSelectedSystemIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectVisibleSystemCandidates() {
+    setSelectedSystemIds((current) => {
+      const next = new Set(current);
+      filteredSystemCandidates.forEach((candidate) => next.add(candidate.id));
+      return next;
+    });
+  }
+
+  function clearVisibleSystemCandidates() {
+    setSelectedSystemIds((current) => {
+      const next = new Set(current);
+      filteredSystemCandidates.forEach((candidate) => next.delete(candidate.id));
+      return next;
+    });
+  }
   async function publishRetryRows() {
     if (!retryRows.length || !download) {
       setStatus("Gere as retentativas antes de subir para o Broadcast.");
@@ -1532,11 +1778,18 @@ function RetryPage() {
     setFiles([]);
     setPastedNumbers("");
     setStatus("");
+    setSystemSearch("");
+    setSelectedSystemIds(new Set());
     setRetryRows([]);
     setRetryStats(null);
     if (download) URL.revokeObjectURL(download.url);
     setDownload(null);
   }
+
+  useEffect(() => {
+    fetchSystemFailures();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <main className="template-page list-cleaner-page retry-page">
@@ -1552,9 +1805,9 @@ function RetryPage() {
 
       <section className="retry-flow-card">
         {[
-          ["Entrada", "Arquivos ou logs", Upload],
+          ["Origem", sourceTab === "system" ? "Falhas do sistema" : "Arquivos ou logs", Upload],
           ["Leitura", "Telefones encontrados", Clock3],
-          ["Tratamento", "Duplicados e inválidos", Sparkles],
+          ["Tratamento", "Duplicados e invalidos", Sparkles],
           ["Pronto", "CSV de retentativas", CheckCircle2],
         ].map(([title, subtitle, Icon], index) => (
           <div className={index <= activeStage ? "retry-step active" : "retry-step"} key={String(title)}>
@@ -1565,98 +1818,221 @@ function RetryPage() {
         ))}
       </section>
 
-      <div className="retry-layout">
-        <section className="card list-card retry-input-card">
-          <h2>
-            <span className="card-title-icon">
-              <Upload size={18} />
-            </span>
-            Lista de Falhas
-          </h2>
-          <p className="hint">Envie arquivos ou cole logs. A tela detecta telefones automaticamente.</p>
+      <section className="retry-source-tabs" aria-label="Origem das retentativas">
+        <button className={sourceTab === "system" ? "active" : ""} onClick={() => setSourceTab("system")} type="button">
+          <Cloud size={16} />
+          Falhas do sistema
+        </button>
+        <button className={sourceTab === "manual" ? "active" : ""} onClick={() => setSourceTab("manual")} type="button">
+          <Upload size={16} />
+          Importar manual
+        </button>
+      </section>
 
-          <label className={files.length ? "dropzone retry-dropzone has-files" : "dropzone retry-dropzone"}>
-            <input
-              accept=".csv,.xlsx,.xls,.txt,.log"
-              multiple
-              onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
-              type="file"
-            />
-            <span className="dropzone-icon">
-              <Upload size={30} />
-            </span>
-            <strong>{files.length ? `${files.length} arquivo(s) selecionado(s)` : "Selecionar arquivos"}</strong>
-            {files.length > 0 ? <small>{files.map((file) => file.name).join(", ")}</small> : <small>CSV, XLSX, TXT ou LOG</small>}
-          </label>
+      {sourceTab === "system" ? (
+        <section className="card list-card retry-system-card">
+          <div className="retry-card-title-row">
+            <div>
+              <h2>
+                <span className="card-title-icon">
+                  <Filter size={18} />
+                </span>
+                Falhas capturadas
+              </h2>
+              <p className="hint">Busque falhas de Broadcast e Flows e gere uma nova base sem copiar logs.</p>
+            </div>
+            <button className="button secondary" disabled={isLoadingSystem} onClick={fetchSystemFailures} type="button">
+              <RefreshCcw size={16} />
+              {isLoadingSystem ? "Atualizando..." : "Atualizar"}
+            </button>
+          </div>
 
-          <label className="field">
-            <span>Números ou logs de falha</span>
-            <textarea
-              className="textarea retry-textarea"
-              onChange={(event) => setPastedNumbers(event.target.value)}
-              placeholder="Cole aqui números, logs de erro ou mensagens com telefones..."
-              value={pastedNumbers}
-            />
-          </label>
-          <div className="retry-live-hint">
-            <Clock3 size={15} />
-            <span>{pastedPreviewCount.toLocaleString("pt-BR")} telefone(s) detectados no texto colado</span>
+          <div className="retry-system-toolbar">
+            <label className="field">
+              <span>Periodo</span>
+              <select className="input" onChange={(event) => setSystemPeriod(event.target.value)} value={systemPeriod}>
+                <option value="Ultimas 24h">Ultimas 24h</option>
+                <option value="Ultimos 7 dias">Ultimos 7 dias</option>
+                <option value="Ultimos 30 dias">Ultimos 30 dias</option>
+                <option value="Tudo">Tudo</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>BM</span>
+              <select className="input" onChange={(event) => setSystemBm(event.target.value)} value={systemBm}>
+                <option value="">Todas as BMs</option>
+                {systemOptions.bms.map((bm) => (
+                  <option key={bm} value={bm}>{bm}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Remetente</span>
+              <select className="input" onChange={(event) => setSystemSender(event.target.value)} value={systemSender}>
+                <option value="">Todos os remetentes</option>
+                {systemOptions.senders.map((sender) => (
+                  <option key={sender} value={sender}>{sender}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field retry-search-field">
+              <span>Busca</span>
+              <div className="input-with-icon">
+                <Search size={16} />
+                <input
+                  className="input"
+                  onChange={(event) => setSystemSearch(event.target.value)}
+                  placeholder="Telefone, campanha, template ou erro..."
+                  value={systemSearch}
+                />
+              </div>
+            </label>
+          </div>
+
+          <div className="retry-system-summary">
+            <span>{systemCandidates.length.toLocaleString("pt-BR")} falha(s) no periodo</span>
+            <span>{selectedSystemCount.toLocaleString("pt-BR")} selecionada(s) visiveis</span>
+            <span>{systemOptions.bms.length.toLocaleString("pt-BR")} BM(s)</span>
+            <span>{systemOptions.senders.length.toLocaleString("pt-BR")} remetente(s)</span>
+          </div>
+
+          <div className="retry-selection-actions">
+            <button className="button ghost" onClick={selectVisibleSystemCandidates} type="button">
+              <Check size={16} />
+              Selecionar visiveis
+            </button>
+            <button className="button ghost" onClick={clearVisibleSystemCandidates} type="button">
+              <XCircle size={16} />
+              Limpar selecao
+            </button>
+            <button className="button" disabled={!selectedSystemIds.size} onClick={generateFromSystemFailures} type="button">
+              <Play size={16} />
+              Gerar retentativa
+            </button>
+          </div>
+
+          <div className="retry-failure-list">
+            {filteredSystemCandidates.length ? (
+              filteredSystemCandidates.map((candidate) => (
+                <label className={selectedSystemIds.has(candidate.id) ? "retry-failure-row selected" : "retry-failure-row"} key={candidate.id}>
+                  <input checked={selectedSystemIds.has(candidate.id)} onChange={() => toggleSystemCandidate(candidate.id)} type="checkbox" />
+                  <span className="retry-failure-phone">{candidate.phone}</span>
+                  <span>
+                    <strong>{candidate.campaignName}</strong>
+                    <small>{candidate.templateName}</small>
+                  </span>
+                  <span>
+                    <strong>{candidate.sender}</strong>
+                    <small>{candidate.bm}</small>
+                  </span>
+                  <span className="retry-failure-error">{candidate.error}</span>
+                  <small>{candidate.createdAt ? new Date(candidate.createdAt).toLocaleString("pt-BR") : "-"}</small>
+                </label>
+              ))
+            ) : (
+              <div className="retry-empty-state">
+                <AlertTriangle size={20} />
+                <strong>Nenhuma falha encontrada</strong>
+                <span>Quando um disparo retornar falha pelo webhook ou pela API, ele aparece aqui para reprocessar.</span>
+              </div>
+            )}
           </div>
         </section>
+      ) : (
+        <div className="retry-layout">
+          <section className="card list-card retry-input-card">
+            <h2>
+              <span className="card-title-icon">
+                <Upload size={18} />
+              </span>
+              Lista de Falhas
+            </h2>
+            <p className="hint">Envie arquivos ou cole logs. A tela detecta telefones automaticamente.</p>
 
-      <section className="card list-card settings-card retry-settings-card">
-        <h2>
-          <span className="card-title-icon">
-            <Settings size={18} />
-          </span>
-          Configurações
-        </h2>
+            <label className={files.length ? "dropzone retry-dropzone has-files" : "dropzone retry-dropzone"}>
+              <input accept=".csv,.xlsx,.xls,.txt,.log" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []))} type="file" />
+              <span className="dropzone-icon">
+                <Upload size={30} />
+              </span>
+              <strong>{files.length ? files.length + " arquivo(s) selecionado(s)" : "Selecionar arquivos"}</strong>
+              {files.length > 0 ? <small>{files.map((file) => file.name).join(", ")}</small> : <small>CSV, XLSX, TXT ou LOG</small>}
+            </label>
 
-        <div className="list-settings-grid">
-          <label className="field">
-            <span>Linhas por etiqueta</span>
-            <input
-              className="input"
-              min={1}
-              onChange={(event) => setRowsPerLabel(Number(event.target.value))}
-              type="number"
-              value={rowsPerLabel}
-            />
-            <p className="hint">Ex: 1000 retentativas por etiqueta gera Retentativa DDMM - 1, - 2...</p>
-          </label>
+            <label className="field">
+              <span>Numeros ou logs de falha</span>
+              <textarea
+                className="textarea retry-textarea"
+                onChange={(event) => setPastedNumbers(event.target.value)}
+                placeholder="Cole aqui numeros, logs de erro ou mensagens com telefones..."
+                value={pastedNumbers}
+              />
+            </label>
+            <div className="retry-live-hint">
+              <Clock3 size={15} />
+              <span>{pastedPreviewCount.toLocaleString("pt-BR")} telefone(s) detectados no texto colado</span>
+            </div>
+          </section>
 
-          <label className="field">
-            <span>Prefixo da etiqueta *</span>
-            <input
-              className="input"
-              onChange={(event) => setPrefix(event.target.value)}
-              placeholder="Retentativa"
-              value={prefix}
-            />
-          </label>
+          <section className="card list-card settings-card retry-settings-card">
+            <h2>
+              <span className="card-title-icon">
+                <Settings size={18} />
+              </span>
+              Configuracoes
+            </h2>
 
-          <div className="checkbox-stack">
-            <CheckOption
-              checked={removeDuplicates}
-              label="Remover duplicados automaticamente"
-              onChange={setRemoveDuplicates}
-            />
-            <CheckOption
-              checked={discardInvalidPhones}
-              label="Descartar telefones inválidos"
-              onChange={setDiscardInvalidPhones}
-            />
-          </div>
+            <div className="list-settings-grid">
+              <label className="field">
+                <span>Linhas por etiqueta</span>
+                <input className="input" min={1} onChange={(event) => setRowsPerLabel(Number(event.target.value))} type="number" value={rowsPerLabel} />
+                <p className="hint">Ex: 1000 retentativas por etiqueta gera Retentativa DDMM - 1, - 2...</p>
+              </label>
+
+              <label className="field">
+                <span>Prefixo da etiqueta *</span>
+                <input className="input" onChange={(event) => setPrefix(event.target.value)} placeholder="Retentativa" value={prefix} />
+              </label>
+
+              <div className="checkbox-stack">
+                <CheckOption checked={removeDuplicates} label="Remover duplicados automaticamente" onChange={setRemoveDuplicates} />
+                <CheckOption checked={discardInvalidPhones} label="Descartar telefones invalidos" onChange={setDiscardInvalidPhones} />
+              </div>
+            </div>
+          </section>
         </div>
-      </section>
-      </div>
+      )}
+
+      {sourceTab === "system" ? (
+        <section className="card list-card settings-card retry-settings-inline">
+          <h2>
+            <span className="card-title-icon">
+              <Settings size={18} />
+            </span>
+            Geracao das etiquetas
+          </h2>
+          <div className="retry-inline-settings-grid">
+            <label className="field">
+              <span>Linhas por etiqueta</span>
+              <input className="input" min={1} onChange={(event) => setRowsPerLabel(Number(event.target.value))} type="number" value={rowsPerLabel} />
+            </label>
+            <label className="field">
+              <span>Prefixo da etiqueta *</span>
+              <input className="input" onChange={(event) => setPrefix(event.target.value)} placeholder="Retentativa" value={prefix} />
+            </label>
+            <div className="checkbox-stack compact">
+              <CheckOption checked={removeDuplicates} label="Remover duplicados" onChange={setRemoveDuplicates} />
+              <CheckOption checked={discardInvalidPhones} label="Descartar invalidos" onChange={setDiscardInvalidPhones} />
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <section className="retry-dashboard">
         {[
-          { label: "Encontrados", value: retryStats?.totalFound ?? pastedPreviewCount, tone: "neutral", Icon: Clock3 },
+          { label: "Encontrados", value: retryStats?.totalFound ?? (sourceTab === "system" ? systemCandidates.length : pastedPreviewCount), tone: "neutral", Icon: Clock3 },
           { label: "Gerados", value: retryStats?.generated ?? 0, tone: "success", Icon: CheckCircle2 },
           { label: "Duplicados", value: retryStats?.duplicates ?? 0, tone: "warning", Icon: RefreshCcw },
-          { label: "Inválidos", value: retryStats?.invalidPhones ?? 0, tone: "danger", Icon: AlertTriangle },
+          { label: "Invalidos", value: retryStats?.invalidPhones ?? 0, tone: "danger", Icon: AlertTriangle },
           { label: "Etiquetas", value: retryStats?.labels ?? 0, tone: "primary", Icon: FileText },
         ].map(({ label, value, tone, Icon }) => (
           <div className={`retry-metric ${tone}`} key={label}>
@@ -1668,10 +2044,12 @@ function RetryPage() {
       </section>
 
       <div className="list-action-row">
-        <button className="button process-list-button" disabled={!canProcess} onClick={handleRetryProcess}>
-          <Play size={18} />
-          {isProcessing ? "Gerando..." : "Gerar retentativas"}
-        </button>
+        {sourceTab === "manual" ? (
+          <button className="button process-list-button" disabled={!canProcess} onClick={handleRetryProcess}>
+            <Play size={18} />
+            {isProcessing ? "Gerando..." : "Gerar retentativas"}
+          </button>
+        ) : null}
         {download ? (
           <>
             <button
