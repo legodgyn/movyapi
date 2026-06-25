@@ -90,6 +90,17 @@ type TreatListCheckSession = {
 const phoneColumnHints = ["telefone", "phone", "whatsapp", "celular", "numero", "número", "contato"];
 const nameColumnHints = ["nome", "name", "cliente", "lead", "nome completo", "full name", "fullname", "first name"];
 const activeWords = ["yes", "sim", "true", "1", "active", "ativo", "ativado", "activated", "whatsapp"];
+const validBrazilDdds = new Set([
+  "11", "12", "13", "14", "15", "16", "17", "18", "19",
+  "21", "22", "24", "27", "28",
+  "31", "32", "33", "34", "35", "37", "38",
+  "41", "42", "43", "44", "45", "46", "47", "48", "49",
+  "51", "53", "54", "55",
+  "61", "62", "63", "64", "65", "66", "67", "68", "69",
+  "71", "73", "74", "75", "77", "79",
+  "81", "82", "83", "84", "85", "86", "87", "88", "89",
+  "91", "92", "93", "94", "95", "96", "97", "98", "99",
+]);
 
 function normalizeHeader(value: string) {
   return value
@@ -102,30 +113,83 @@ function normalizeCell(value: unknown) {
   return String(value ?? "").trim();
 }
 
-function normalizeBrazilPhone(value: unknown) {
-  const digits = normalizeCell(value).replace(/\D/g, "");
-  if (!digits) return "";
-
-  if (digits.startsWith("55") && digits.length >= 12) {
-    return digits.slice(0, 13);
+function rawPhoneDigits(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value).toLocaleString("fullwide", { useGrouping: false }).replace(/\D/g, "");
   }
 
-  if (digits.length === 11 || digits.length === 10) {
-    return `55${digits}`;
+  const text = normalizeCell(value);
+  if (/^\d+(?:[.,]\d+)?e\+?\d+$/i.test(text)) {
+    const numeric = Number(text.replace(",", "."));
+    if (Number.isFinite(numeric)) {
+      return Math.trunc(numeric).toLocaleString("fullwide", { useGrouping: false }).replace(/\D/g, "");
+    }
   }
 
+  return text.replace(/\D/g, "");
+}
+
+function stripBrazilLongDistancePrefix(digits: string) {
+  if (/^0\d{2}\d{10,11}$/.test(digits)) return digits.slice(3);
+  if (/^0\d{10,11}$/.test(digits)) return digits.slice(1);
   return digits;
 }
 
+function normalizeBrazilPhoneCandidate(digits: string) {
+  if (!digits) return "";
+
+  let value = digits.replace(/^00+/, "");
+  if (value.startsWith("55")) value = value.slice(2);
+  value = stripBrazilLongDistancePrefix(value);
+
+  if (value.length !== 10 && value.length !== 11) return "";
+
+  const ddd = value.slice(0, 2);
+  if (!validBrazilDdds.has(ddd)) return "";
+
+  const localNumber = value.slice(2);
+  if (/^(\d)\1+$/.test(localNumber)) return "";
+
+  if (localNumber.length === 8) return `55${ddd}9${localNumber}`;
+  if (localNumber.length === 9 && localNumber.startsWith("9")) return `55${ddd}${localNumber}`;
+
+  return "";
+}
+
+function normalizeBrazilPhone(value: unknown) {
+  const digits = rawPhoneDigits(value);
+  if (!digits) return "";
+
+  const candidates = new Set<string>([
+    digits,
+    digits.replace(/^0+/, ""),
+    stripBrazilLongDistancePrefix(digits),
+  ]);
+
+  if (digits.startsWith("00")) candidates.add(digits.replace(/^00+/, ""));
+  if (digits.startsWith("55")) candidates.add(digits.slice(2));
+  if (digits.startsWith("0055")) candidates.add(digits.slice(4));
+
+  for (const size of [13, 12, 11, 10]) {
+    if (digits.length > size) candidates.add(digits.slice(-size));
+  }
+
+  for (const candidate of candidates) {
+    const normalized = normalizeBrazilPhoneCandidate(candidate);
+    if (normalized) return normalized;
+  }
+
+  return "";
+}
+
 function isValidBrazilPhone(phone: string) {
-  if (!phone.startsWith("55")) return false;
-  if (phone.length !== 12 && phone.length !== 13) return false;
+  if (!/^55\d{11}$/.test(phone)) return false;
 
   const ddd = phone.slice(2, 4);
   const localNumber = phone.slice(4);
-  if (ddd.startsWith("0")) return false;
+  if (!validBrazilDdds.has(ddd)) return false;
   if (/^(\d)\1+$/.test(localNumber)) return false;
-  if (phone.length === 13 && localNumber[0] !== "9") return false;
+  if (!localNumber.startsWith("9")) return false;
 
   return true;
 }
@@ -140,8 +204,15 @@ function getColumnByHints(row: ListRow | undefined, hints: string[]) {
 
 function getPhoneKey(row: ListRow) {
   const phoneColumn = getColumnByHints(row, phoneColumnHints);
-  const sourceValue = phoneColumn ? row[phoneColumn] : Object.values(row).find((value) => /\d{8,}/.test(normalizeCell(value)));
-  return normalizeBrazilPhone(sourceValue);
+  const values = phoneColumn ? [row[phoneColumn], ...Object.values(row)] : Object.values(row);
+
+  for (const value of values) {
+    if (!/\d{8,}/.test(rawPhoneDigits(value))) continue;
+    const phone = normalizeBrazilPhone(value);
+    if (phone) return phone;
+  }
+
+  return "";
 }
 
 function isPhoneColumn(key: string) {
@@ -160,7 +231,7 @@ function findPhoneColumnInRows(rows: ListRow[]) {
 }
 
 function findFirstPhoneValue(row: ListRow) {
-  return Object.values(row).find((value) => /\d{8,}/.test(normalizeCell(value).replace(/\D/g, "")));
+  return Object.values(row).find((value) => /\d{8,}/.test(rawPhoneDigits(value)) && normalizeBrazilPhone(value));
 }
 
 function extractTask(payload: unknown): CheckNumberTask | undefined {
@@ -333,8 +404,15 @@ async function readFileText(file: File) {
 }
 
 function extractPhonesFromText(text: string) {
-  const matches = text.match(/(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[-.\s]?\d{4}/g) ?? [];
-  return matches.map(normalizeBrazilPhone).filter(Boolean);
+  const matches = text.match(/\+?\d[\d\s()./-]{7,}\d/g) ?? [];
+  const phones = matches.map(normalizeBrazilPhone).filter(Boolean);
+
+  if (phones.length) return phones;
+
+  return text
+    .split(/[\s,;|]+/)
+    .map(normalizeBrazilPhone)
+    .filter(Boolean);
 }
 
 function createCsv(rows: ListRow[]) {
@@ -883,7 +961,7 @@ function TreatListPage() {
 
       for (const row of sourceRows) {
         const phoneKey = getPhoneKey(row);
-        if (discardInvalidPhones && !isValidBrazilPhone(phoneKey)) {
+        if (!isValidBrazilPhone(phoneKey)) {
           stats.invalidPhones += 1;
           continue;
         }
@@ -955,7 +1033,7 @@ function TreatListPage() {
 
       for (const row of sourceRows) {
         const phoneKey = getPhoneKey(row);
-        if (discardInvalidPhones && !isValidBrazilPhone(phoneKey)) {
+        if (!isValidBrazilPhone(phoneKey)) {
           stats.invalidPhones += 1;
           continue;
         }
@@ -1638,7 +1716,7 @@ function RetryPage() {
 
     for (const rawPhone of phones) {
       const phone = normalizeBrazilPhone(rawPhone);
-      if (discardInvalidPhones && !isValidBrazilPhone(phone)) {
+      if (!isValidBrazilPhone(phone)) {
         stats.invalidPhones += 1;
         continue;
       }
