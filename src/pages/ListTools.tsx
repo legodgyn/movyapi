@@ -263,7 +263,7 @@ async function checkNumberRequest(path: string, init: RequestInit = {}) {
 
 async function createWhatsappTask(phones: string[]) {
   const brazilPhones = Array.from(new Set(phones.map(normalizeBrazilPhone).filter(isValidBrazilPhone)));
-  const content = brazilPhones.map(toE164).filter(Boolean).join("\n");
+  const content = brazilPhones.join("\n");
   if (!content) throw new Error("Nenhum telefone brasileiro valido (+55) para enviar a CheckNumber.");
 
   const file = new File([content], "movy-whatsapp-check.txt", { type: "text/plain" });
@@ -393,6 +393,10 @@ function isEmptyRow(row: ListRow) {
 }
 
 async function readRows(file: File) {
+  if (/\.(csv|txt)$/i.test(file.name)) {
+    return parseDelimitedText(await file.text()).filter((row) => !isEmptyRow(row));
+  }
+
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: "array" });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
