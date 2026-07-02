@@ -1334,6 +1334,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
   const [testModalOpen, setTestModalOpen] = useState(false);
   const [testRecipient, setTestRecipient] = useState("");
   const [isSendingTest, setIsSendingTest] = useState(false);
+  const [testFeedback, setTestFeedback] = useState<{ type: "idle" | "sending" | "success" | "error"; message: string }>({ type: "idle", message: "" });
   const fixedMode = mode;
 
   const selectedSender = useMemo(
@@ -2048,21 +2049,30 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
   }
 
   async function sendTestRun() {
+    setTestFeedback({ type: "idle", message: "" });
     if (!planReady) {
-      setStatus("Complete remetente, templates, etiquetas e customizacoes antes de enviar um teste.");
+      const message = "Complete remetente, templates, etiquetas e customizacoes antes de enviar um teste.";
+      setStatus(message);
+      setTestFeedback({ type: "error", message });
       return;
     }
     const phone = normalizeRecipientPhone(testRecipient);
     if (!phone) {
-      setStatus("Informe um telefone valido para enviar o teste.");
+      const message = "Informe um telefone valido para enviar o teste.";
+      setStatus(message);
+      setTestFeedback({ type: "error", message });
       return;
     }
     if (!senderPool.length) {
-      setStatus("Selecione um remetente conectado antes de enviar o teste.");
+      const message = "Selecione um remetente conectado antes de enviar o teste.";
+      setStatus(message);
+      setTestFeedback({ type: "error", message });
       return;
     }
     if (!distribution.length) {
-      setStatus("Selecione templates e etiquetas antes de enviar o teste.");
+      const message = "Selecione templates e etiquetas antes de enviar o teste.";
+      setStatus(message);
+      setTestFeedback({ type: "error", message });
       return;
     }
 
@@ -2079,12 +2089,16 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
       return !phoneNumberId || !accessToken;
     });
     if (missingCredentials.length) {
-      setStatus(`Remetente sem Phone Number ID ou token: ${missingCredentials.map(senderLabel).join(", ")}.`);
+      const message = `Remetente sem Phone Number ID ou token: ${missingCredentials.map(senderLabel).join(", ")}.`;
+      setStatus(message);
+      setTestFeedback({ type: "error", message });
       return;
     }
 
     setIsSendingTest(true);
+    const sendingMessage = `Enviando ${distribution.length.toLocaleString("pt-BR")} mensagem(ns) de teste para ${phone}...`;
     setStatus("Enviando teste para o destinatario informado...");
+    setTestFeedback({ type: "sending", message: sendingMessage });
 
     try {
       const primaryAccount = findAccountForSender(senderPool[0]);
@@ -2174,14 +2188,16 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
       const responseRecord = asRecord(response);
       const accepted = numberFromResponse(responseRecord, ["accepted", "accepted_count", "sent", "sent_count", "queued", "queued_count", "enqueued"], backendMessageIds(response).length);
       const failed = numberFromResponse(responseRecord, ["failed", "failed_count", "errors", "error_count"], 0);
-      setStatus(
+      const message =
         failed
           ? `Teste enviado com ${accepted.toLocaleString("pt-BR")} aceite(s) e ${failed.toLocaleString("pt-BR")} falha(s). Confira as atualizacoes.`
-          : `Teste enviado para ${phone}: ${accepted.toLocaleString("pt-BR")} mensagem(ns) aceita(s) pela Meta.`,
-      );
-      if (accepted > 0 && !failed) setTestModalOpen(false);
+          : `Teste enviado para ${phone}: ${accepted.toLocaleString("pt-BR")} mensagem(ns) aceita(s) pela Meta.`;
+      setStatus(message);
+      setTestFeedback({ type: failed ? "error" : "success", message });
     } catch (error) {
-      setStatus(`Falha ao enviar teste: ${formatBackendError(error)}`);
+      const message = `Falha ao enviar teste: ${formatBackendError(error)}`;
+      setStatus(message);
+      setTestFeedback({ type: "error", message });
     } finally {
       setIsSendingTest(false);
     }
@@ -3670,12 +3686,23 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                 autoFocus
                 placeholder="Ex: 85999999999"
                 value={testRecipient}
-                onChange={(event) => setTestRecipient(event.target.value)}
+                onChange={(event) => {
+                  setTestRecipient(event.target.value);
+                  if (testFeedback.type !== "idle") setTestFeedback({ type: "idle", message: "" });
+                }}
               />
             </label>
             <p className="hint">
               O teste envia {Math.max(1, distribution.length).toLocaleString("pt-BR")} mensagem(ns), uma para cada template configurado neste lote.
             </p>
+            {testFeedback.message ? (
+              <div className={`test-send-feedback ${testFeedback.type}`}>
+                <span>
+                  {testFeedback.type === "sending" ? <RefreshCcw className="spin" size={16} /> : testFeedback.type === "success" ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                </span>
+                <strong>{testFeedback.message}</strong>
+              </div>
+            ) : null}
             <div className="modal-actions">
               <button className="button secondary" onClick={() => setTestModalOpen(false)} type="button" disabled={isSendingTest}>Cancelar</button>
               <button className="button" onClick={sendTestRun} type="button" disabled={isSendingTest || !testRecipient.trim()}>

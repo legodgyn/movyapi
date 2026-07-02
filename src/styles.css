@@ -4084,6 +4084,48 @@ a {
   top: 14px;
 }
 
+.test-send-feedback {
+  align-items: flex-start;
+  background: hsl(var(--muted) / .42);
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  display: flex;
+  gap: 10px;
+  padding: 11px 12px;
+}
+
+.test-send-feedback span {
+  align-items: center;
+  border-radius: 7px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 26px;
+  justify-content: center;
+  width: 26px;
+}
+
+.test-send-feedback strong {
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.test-send-feedback.sending span {
+  background: hsl(213 94% 68% / .16);
+  color: hsl(213 94% 68%);
+}
+
+.test-send-feedback.success span {
+  background: hsl(145 70% 45% / .16);
+  color: hsl(145 70% 45%);
+}
+
+.test-send-feedback.error span {
+  background: hsl(0 84% 64% / .16);
+  color: hsl(0 84% 64%);
+}
+
 .broadcast-flow-shell {
   background: hsl(222 32% 5% / .98);
   border: 1px solid hsl(var(--border));
