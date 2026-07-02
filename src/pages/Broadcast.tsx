@@ -2190,8 +2190,8 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
       const failed = numberFromResponse(responseRecord, ["failed", "failed_count", "errors", "error_count"], 0);
       const message =
         failed
-          ? `Teste enviado com ${accepted.toLocaleString("pt-BR")} aceite(s) e ${failed.toLocaleString("pt-BR")} falha(s). Confira as atualizacoes.`
-          : `Teste enviado para ${phone}: ${accepted.toLocaleString("pt-BR")} mensagem(ns) aceita(s) pela Meta.`;
+          ? `Teste enviado com ${accepted.toLocaleString("pt-BR")} mensagem(ns) enviada(s) e ${failed.toLocaleString("pt-BR")} falha(s). Confira as atualizacoes.`
+          : `Teste enviado para ${phone}: ${accepted.toLocaleString("pt-BR")} mensagem(ns) enviada(s).`;
       setStatus(message);
       setTestFeedback({ type: failed ? "error" : "success", message });
     } catch (error) {
