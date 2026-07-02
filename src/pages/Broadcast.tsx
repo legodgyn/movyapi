@@ -25,6 +25,8 @@ import {
   Users,
   X,
 } from "lucide-react";
+import "@material/web/progress/linear-progress.js";
+import "@material/web/progress/circular-progress.js";
 import { broadcasts, contacts, infobipApis, media as mediaService, savedTemplates } from "../lib/services";
 import { config } from "../lib/config";
 import { apiGet, unwrapList } from "../lib/api";
@@ -2005,8 +2007,8 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
             message: failed
               ? `Sistema retornou ${failed.toLocaleString("pt-BR")} falha(s) imediata(s).`
               : waitingForWebhook
-                ? `${Math.max(accepted, messageIds.length).toLocaleString("pt-BR")} mensagem(ns) aceita(s) pela Meta. Aguardando webhook publico para confirmar entrega ou falha.`
-                : `${Math.max(accepted, messageIds.length).toLocaleString("pt-BR")} mensagem(ns) aceita(s) pelo sistema. A entrega final depende do status/webhook.`,
+                ? `${Math.max(accepted, messageIds.length).toLocaleString("pt-BR")} mensagem(ns) enviada(s). Aguardando status final de entrega ou falha.`
+                : `${Math.max(accepted, messageIds.length).toLocaleString("pt-BR")} mensagem(ns) enviada(s). Acompanhe a entrega final pelo status.`,
             time: nowTime(),
           },
           ...backendEvents,
@@ -2017,8 +2019,8 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
         failed
           ? "O sistema retornou falhas no disparo. Confira os detalhes em atualizacoes em tempo real."
           : waitingForWebhook
-            ? "Mensagem aceita pela Meta. Aguardando webhook publico para confirmar entregue ou falha."
-          : "Lote criado no sistema. Acompanhe os status reais retornados pelo backend/webhook.",
+            ? "Mensagem enviada. Aguardando status final de entrega ou falha."
+          : "Lote criado no sistema. Acompanhe os status finais retornados pelo backend.",
       );
     } catch (error) {
       const message = formatBackendError(error);
@@ -2330,7 +2332,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
             {
               id: crypto.randomUUID(),
               type: "success" as const,
-              message: `${phone} aceito pela Meta | ${messageId}. A entrega/falha final depende do webhook de status.`,
+              message: `${phone} enviado. Aguardando status final de entrega ou falha.`,
               time: nowTime(),
             },
             ...nextRun.events,
@@ -2346,7 +2348,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
             {
               id: crypto.randomUUID(),
               type: "failed" as const,
-              message: `${phone} falhou: ${error instanceof Error ? error.message : "erro desconhecido da Meta"}`,
+              message: `${phone} falhou: ${error instanceof Error ? error.message : "erro desconhecido"}`,
               time: nowTime(),
             },
             ...nextRun.events,
@@ -2366,7 +2368,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
           type: (nextRun.failed ? "failed" : "success") as RunEvent["type"],
           message: nextRun.failed
             ? `Lote finalizado com ${nextRun.failed.toLocaleString("pt-BR")} falha(s). Veja os erros abaixo.`
-            : `${nextRun.accepted.toLocaleString("pt-BR")} mensagem(ns) aceita(s) pela Meta. Aguardando webhook/status para confirmar entrega ou falha.`,
+            : `${nextRun.accepted.toLocaleString("pt-BR")} mensagem(ns) enviada(s). Aguardando status final de entrega ou falha.`,
           time: nowTime(),
         },
         ...nextRun.events,
@@ -2376,8 +2378,8 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
     setIsDispatching(false);
     setStatus(
       nextRun.failed
-        ? "Disparo finalizado com falhas imediatas retornadas pela Meta."
-        : "A Meta aceitou as mensagens. Entrega, bloqueio por pagamento e falhas finais chegam depois via webhook de status."
+        ? "Disparo finalizado com falhas imediatas."
+        : "Mensagens enviadas. Entrega, bloqueio por pagamento e falhas finais chegam depois pelo status."
     );
   }
 
@@ -2624,7 +2626,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
             failedDelta += 1;
             statusByMessageId[messageStatus.id] = messageStatus;
             const errorText = [
-              messageStatus.errorTitle || "Falha da Meta",
+              messageStatus.errorTitle || "Falha no envio",
               messageStatus.errorMessage,
               messageStatus.errorCode ? `codigo ${messageStatus.errorCode}` : "",
             ].filter(Boolean).join(" | ");
@@ -2649,14 +2651,14 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                   id: crypto.randomUUID(),
                   type: "info" as const,
                   message:
-                    "Webhook sem retorno ate agora. A Meta aceitou a mensagem, mas entrega/falha final so aparece quando o webhook publico da Cloud API estiver configurado.",
+                    "Status final ainda sem retorno. Entrega ou falha aparece quando o webhook publico da Cloud API estiver configurado.",
                   time: nowTime(),
                 },
                 ...currentRun.events,
               ].slice(0, 30),
             };
             updateRun(nextRun);
-            setStatus("Mensagem aceita pela Meta. Aguardando webhook publico para confirmar entregue ou falha.");
+            setStatus("Mensagem enviada. Aguardando status final de entrega ou falha.");
           }
           return;
         }
@@ -2673,7 +2675,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
         updateRun(nextRun);
         setStatus(
           nextPending
-            ? `${nextPending.toLocaleString("pt-BR")} mensagem(ns) ainda aguardando status da Meta.`
+            ? `${nextPending.toLocaleString("pt-BR")} mensagem(ns) ainda aguardando status final.`
             : "Todos os status recebidos pelo webhook local."
         );
       } catch {
@@ -2716,19 +2718,23 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
           </div>
 
           <section className="broadcast-dashboard-kpis">
-            <div>
+            <div className="m3-kpi success">
+              <span className="m3-kpi-icon"><CheckCircle2 size={18} /></span>
               <span>Entregues</span>
               <strong>{dashboardTotals.delivered.toLocaleString("pt-BR")}</strong>
             </div>
-            <div>
+            <div className="m3-kpi danger">
+              <span className="m3-kpi-icon"><AlertTriangle size={18} /></span>
               <span>Falhas</span>
               <strong>{dashboardTotals.failed.toLocaleString("pt-BR")}</strong>
             </div>
-            <div>
+            <div className="m3-kpi warning">
+              <span className="m3-kpi-icon"><Clock3 size={18} /></span>
               <span>Pendentes</span>
               <strong>{dashboardTotals.pending.toLocaleString("pt-BR")}</strong>
             </div>
-            <div>
+            <div className="m3-kpi info">
+              <span className="m3-kpi-icon"><Megaphone size={18} /></span>
               <span>Lotes</span>
               <strong>{dashboardTotals.lots.toLocaleString("pt-BR")}</strong>
             </div>
@@ -3485,7 +3491,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
               <div className="run-dashboard">
                 <div className="live-kpi-grid">
                   <div className="live-kpi success">
-                    <span>Taxa aceita</span>
+                    <span>Taxa enviada</span>
                     <strong>{acceptedRate(run)}%</strong>
                   </div>
                   <div className="live-kpi danger">
@@ -3506,10 +3512,9 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                   <div className="broadcast-status-note">
                     <Clock3 size={17} />
                     <div>
-                      <strong>Aceito pela Meta, aguardando webhook</strong>
+                      <strong>Enviado, aguardando status final</strong>
                       <span>
-                        O wamid confirma que a Meta recebeu a mensagem. Entregue ou falha final so aparece quando o webhook publico
-                        da Cloud API estiver configurado e retornando status.
+                        A entrega ou falha final aparece quando o webhook publico da Cloud API estiver configurado e retornando status.
                       </span>
                     </div>
                   </div>
@@ -3519,7 +3524,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                   <div className="run-stat success">
                     <CheckCircle2 size={18} />
                     <strong>{run.accepted.toLocaleString("pt-BR")}</strong>
-                    <span>Aceitos Meta</span>
+                    <span>Enviados</span>
                   </div>
                   <div className="run-stat warning">
                     <Clock3 size={18} />
@@ -3548,6 +3553,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                     <strong>{percent(run)}%</strong>
                     <span>{run.status === "idle" ? "Aguardando inicio" : runStatusText}</span>
                   </div>
+                  <md-linear-progress value={percent(run) / 100}></md-linear-progress>
                   <div className="progress-track">
                     <span style={{ width: `${percent(run)}%` }} />
                   </div>
@@ -3701,6 +3707,7 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                   {testFeedback.type === "sending" ? <RefreshCcw className="spin" size={16} /> : testFeedback.type === "success" ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
                 </span>
                 <strong>{testFeedback.message}</strong>
+                {testFeedback.type === "sending" ? <md-linear-progress indeterminate></md-linear-progress> : null}
               </div>
             ) : null}
             <div className="modal-actions">

@@ -11,6 +11,7 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@material/web": "^2.4.1",
     "@vitejs/plugin-react": "^4.3.4",
     "axios": "^1.7.9",
     "date-fns": "^4.1.0",
