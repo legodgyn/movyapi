@@ -1331,6 +1331,9 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
     channel: "Cloud API" as BroadcastCampaign["channel"],
     description: "",
   });
+  const [testModalOpen, setTestModalOpen] = useState(false);
+  const [testRecipient, setTestRecipient] = useState("");
+  const [isSendingTest, setIsSendingTest] = useState(false);
   const fixedMode = mode;
 
   const selectedSender = useMemo(
@@ -2041,6 +2044,146 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
       setStatus(`Falha ao disparar pelo sistema: ${message}`);
     } finally {
       setIsDispatching(false);
+    }
+  }
+
+  async function sendTestRun() {
+    if (!planReady) {
+      setStatus("Complete remetente, templates, etiquetas e customizacoes antes de enviar um teste.");
+      return;
+    }
+    const phone = normalizeRecipientPhone(testRecipient);
+    if (!phone) {
+      setStatus("Informe um telefone valido para enviar o teste.");
+      return;
+    }
+    if (!senderPool.length) {
+      setStatus("Selecione um remetente conectado antes de enviar o teste.");
+      return;
+    }
+    if (!distribution.length) {
+      setStatus("Selecione templates e etiquetas antes de enviar o teste.");
+      return;
+    }
+
+    const testSenders = Array.from(
+      new Map(distribution.map((item) => {
+        const sender = item.sender || senderPool[0];
+        return [sender?.id || "", sender];
+      })).values(),
+    ).filter(Boolean) as InfobipApi[];
+    const missingCredentials = testSenders.filter((sender) => {
+      const account = findAccountForSender(sender);
+      const phoneNumberId = String(sender.phoneNumberId || sender.defaultPhoneNumberId || account?.phoneNumberId || account?.defaultPhoneNumberId || "").trim();
+      const accessToken = String(sender.accessToken || sender.token || account?.accessToken || "").trim();
+      return !phoneNumberId || !accessToken;
+    });
+    if (missingCredentials.length) {
+      setStatus(`Remetente sem Phone Number ID ou token: ${missingCredentials.map(senderLabel).join(", ")}.`);
+      return;
+    }
+
+    setIsSendingTest(true);
+    setStatus("Enviando teste para o destinatario informado...");
+
+    try {
+      const primaryAccount = findAccountForSender(senderPool[0]);
+      const phoneNumberId = String(senderPool[0].phoneNumberId || senderPool[0].defaultPhoneNumberId || primaryAccount?.phoneNumberId || primaryAccount?.defaultPhoneNumberId || "").trim();
+      const accessToken = String(senderPool[0].accessToken || senderPool[0].token || primaryAccount?.accessToken || "").trim();
+      const payload = buildDispatchPayload({
+        plan,
+        sender: senderPool[0],
+        templates: selectedTemplates,
+        tags: selectedTags,
+        distribution,
+        totalContacts: distribution.length,
+        campaign: campaigns.find((campaign) => campaign.id === activeCampaignId),
+      }) as Record<string, unknown>;
+
+      const testJobs = distribution.map((item) => {
+        const sender = item.sender || senderPool[0];
+        const customization = plan.customizations[item.customizationKey] || plan.customizations[item.template.id] || emptyCustomization();
+        return {
+          recipient: {
+            id: `test-${phone}-${item.template.id}`,
+            name: "Teste",
+            phone,
+            tagId: item.tag.id,
+            tagName: `Teste - ${tagDisplayName(item.tag)}`,
+          },
+          sender,
+          template: item.template,
+          customization,
+          lotId: `${sender?.id || "manual"}-${item.template.id}-${item.tag.id}`,
+        };
+      });
+
+      const lots = Array.isArray(payload.lots) ? (payload.lots as Array<Record<string, unknown>>) : [];
+      payload.id = `test-${crypto.randomUUID()}`;
+      payload.status = "test";
+      payload.dispatchMode = "test";
+      payload.requestedFrom = "movy-web-test";
+      payload.campaignName = `${String(payload.campaignName || "Campanha")} - teste`;
+      payload.totals = {
+        ...asRecord(payload.totals),
+        contacts: testJobs.length,
+        recipients: testJobs.length,
+        lots: Math.max(1, testJobs.length),
+      };
+      payload.lots = lots.map((lot) => {
+        const audience = asRecord(lot.audience);
+        const template = asRecord(lot.template);
+        const lotSender = asRecord(lot.sender);
+        const lotKey = `${String(lotSender.id || senderPool[0]?.id || "manual")}-${String(template.id || "")}-${String(audience.tagId || "")}`;
+        const recipients = testJobs.filter((job) => job.lotId === lotKey);
+        return {
+          ...lot,
+          recipients: recipients.map((job) => ({
+            id: job.recipient.id,
+            name: job.recipient.name,
+            phone,
+            tagId: job.recipient.tagId,
+            tagName: job.recipient.tagName,
+            templateId: job.template.id,
+            templateName: job.template.name,
+            variables: job.customization.variables,
+          })),
+        };
+      });
+      payload.recipients = testJobs.map((job) => {
+        const account = findAccountForSender(job.sender);
+        return {
+          id: job.recipient.id,
+          name: job.recipient.name,
+          phone,
+          tagId: job.recipient.tagId,
+          tagName: job.recipient.tagName,
+          lotId: job.lotId,
+          senderId: job.sender.id,
+          senderName: senderLabel(job.sender),
+          phoneNumberId: job.sender.phoneNumberId || job.sender.defaultPhoneNumberId || account?.phoneNumberId || account?.defaultPhoneNumberId || "",
+          accessToken: job.sender.accessToken || job.sender.token || account?.accessToken || "",
+          templateId: job.template.id,
+          templateName: job.template.name,
+          variables: job.customization.variables,
+          mediaUrl: job.customization.mediaUrl,
+        };
+      });
+
+      const response = await dispatchThroughSystem(payload, { phoneNumberId, accessToken });
+      const responseRecord = asRecord(response);
+      const accepted = numberFromResponse(responseRecord, ["accepted", "accepted_count", "sent", "sent_count", "queued", "queued_count", "enqueued"], backendMessageIds(response).length);
+      const failed = numberFromResponse(responseRecord, ["failed", "failed_count", "errors", "error_count"], 0);
+      setStatus(
+        failed
+          ? `Teste enviado com ${accepted.toLocaleString("pt-BR")} aceite(s) e ${failed.toLocaleString("pt-BR")} falha(s). Confira as atualizacoes.`
+          : `Teste enviado para ${phone}: ${accepted.toLocaleString("pt-BR")} mensagem(ns) aceita(s) pela Meta.`,
+      );
+      if (accepted > 0 && !failed) setTestModalOpen(false);
+    } catch (error) {
+      setStatus(`Falha ao enviar teste: ${formatBackendError(error)}`);
+    } finally {
+      setIsSendingTest(false);
     }
   }
 
@@ -3431,6 +3574,10 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
                   <RotateCcw size={17} />
                   Limpar
                 </button>
+                <button className="button secondary" disabled={!planReady || runLocked || isSendingTest} onClick={() => setTestModalOpen(true)} type="button">
+                  <Send size={17} />
+                  Enviar Teste
+                </button>
                 <button className="button" disabled={!planReady || runLocked} onClick={startSystemRun}>
                   <Send size={17} />
                   {isDispatching ? "Enviando..." : "Disparar Agora"}
@@ -3510,6 +3657,35 @@ export function Broadcast({ mode = "simple" }: BroadcastProps) {
           {status ? <p className="hint">{status}</p> : null}
         </aside>
       </section>
+      {testModalOpen ? (
+        <div className="modal-backdrop">
+          <div className="broadcast-campaign-modal">
+            <button className="icon-button modal-close" onClick={() => setTestModalOpen(false)} type="button" disabled={isSendingTest}>
+              <X size={16} />
+            </button>
+            <h2>Enviar Teste</h2>
+            <label>
+              Destinatario
+              <input
+                autoFocus
+                placeholder="Ex: 85999999999"
+                value={testRecipient}
+                onChange={(event) => setTestRecipient(event.target.value)}
+              />
+            </label>
+            <p className="hint">
+              O teste envia {Math.max(1, distribution.length).toLocaleString("pt-BR")} mensagem(ns), uma para cada template configurado neste lote.
+            </p>
+            <div className="modal-actions">
+              <button className="button secondary" onClick={() => setTestModalOpen(false)} type="button" disabled={isSendingTest}>Cancelar</button>
+              <button className="button" onClick={sendTestRun} type="button" disabled={isSendingTest || !testRecipient.trim()}>
+                <Send size={16} />
+                {isSendingTest ? "Enviando..." : "Enviar Teste"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       </section>
     </main>
   );
