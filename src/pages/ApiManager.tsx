@@ -190,6 +190,13 @@ export function ApiManager() {
       const fallback = senderFromApi(api);
       const next = normalized.length ? normalized : fallback ? [fallback] : [];
       setSenderOptions((current) => ({ ...current, [api.id]: next }));
+      setApis((current) =>
+        current.map((item) =>
+          item.id === api.id
+            ? { ...item, senders: rows, last_sync_error: "", last_sync_at: new Date().toISOString() }
+            : item
+        )
+      );
       setStatus(next.length ? `${next.length} remetente(s) encontrado(s). Escolha quais deseja sincronizar no sistema.` : "Nenhum remetente retornado pela Infobip.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha ao sincronizar remetentes.";
@@ -294,7 +301,11 @@ export function ApiManager() {
               const baseUrl = apiValue(api, "base_url", "baseUrl", "url");
               const sender = apiValue(api, "sender_number", "senderNumber", "phone_number");
               const token = apiValue(api, "token", "api_key", "apiKey", "authorization");
-              const options = senderOptions[api.id] || [];
+              const cachedRows = Array.isArray(api.senders) ? api.senders : [];
+              const cachedOptions = cachedRows
+                .map((row, index) => normalizeSender(api, row as Record<string, unknown>, index))
+                .filter((option) => option.sender || option.name);
+              const options = senderOptions[api.id] || cachedOptions;
               const connected = integratedSenders.filter((item) => item.apiId === api.id);
               return (
                 <article className="api-connection-card" key={api.id}>

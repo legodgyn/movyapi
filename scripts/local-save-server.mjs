@@ -811,7 +811,7 @@ async function handleInfobipApis(request, response) {
         last_sync_error: "",
       };
       await writeInfobipApis([nextApi, ...apis.filter((item) => String(item.id) !== id)]);
-      sendJson(response, 200, { ok: true, data: result.senders, raw: result.payload });
+      sendJson(response, 200, { ok: true, data: result.senders, count: result.senders.length });
       return true;
     }
 
