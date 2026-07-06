@@ -3214,20 +3214,27 @@ a {
 
 .activated-result {
   background:
-    linear-gradient(145deg, hsl(var(--success) / .18), hsl(var(--card) / .98) 42%),
+    linear-gradient(145deg, hsl(var(--success) / .08), hsl(var(--card) / .98) 42%),
     hsl(var(--card));
-  border-color: hsl(var(--success) / .48);
-  box-shadow: 0 22px 64px rgb(0 0 0 / .3), 0 0 0 1px hsl(var(--success) / .16);
+  border-color: hsl(var(--success) / .3);
+  box-shadow: 0 22px 64px rgb(0 0 0 / .3), 0 0 0 1px hsl(var(--success) / .08);
 }
 
 .activated-result .contacts-card-header h3 {
-  color: hsl(var(--success));
+  color: hsl(153 58% 62%);
   font-size: 22px;
 }
 
 .activated-result .button {
-  background: hsl(var(--success));
-  color: hsl(var(--success-foreground));
+  background: linear-gradient(135deg, hsl(154 44% 48%), hsl(160 38% 42%));
+  border-color: hsl(154 40% 56% / .42);
+  box-shadow: 0 12px 26px hsl(154 50% 26% / .2);
+  color: hsl(150 40% 96%);
+}
+
+.activated-result .button:hover {
+  background: linear-gradient(135deg, hsl(154 44% 52%), hsl(160 38% 46%));
+  box-shadow: 0 14px 30px hsl(154 50% 26% / .24);
 }
 
 .spin-icon {
