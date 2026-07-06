@@ -622,13 +622,30 @@ async function fetchInfobipJson(api, path) {
     error.statusCode = 400;
     throw error;
   }
-  const upstream = await fetch(`${baseUrl}${path}`, {
-    headers: {
-      Accept: "application/json",
-      Authorization: `App ${token}`,
-      "User-Agent": "MovyApi/1.0",
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  let upstream;
+  try {
+    upstream = await fetch(`${baseUrl}${path}`, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        Authorization: `App ${token}`,
+        "User-Agent": "MovyApi/1.0",
+      },
+    });
+  } catch (error) {
+    const message = error?.name === "AbortError"
+      ? "Nao foi possivel conectar na Infobip dentro do tempo limite."
+      : error instanceof Error
+        ? error.message
+        : "Falha de rede ao conectar na Infobip.";
+    const networkError = new Error(message);
+    networkError.statusCode = 504;
+    throw networkError;
+  } finally {
+    clearTimeout(timeout);
+  }
   const raw = await upstream.text();
   let parsed = {};
   try {
@@ -657,6 +674,7 @@ async function syncInfobipSenders(api) {
       return { payload, senders };
     } catch (error) {
       lastError = error;
+      if (error?.statusCode && error.statusCode >= 400 && error.statusCode < 500) throw error;
     }
   }
   throw lastError || new Error("Nao foi possivel consultar remetentes na Infobip.");
