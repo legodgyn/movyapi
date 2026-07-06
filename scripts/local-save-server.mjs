@@ -427,7 +427,7 @@ async function runSqlite(args) {
   await mkdir(dirname(databasePath), { recursive: true });
   try {
     const { stdout } = await execFileAsync("sqlite3", [databasePath, ...args], {
-      maxBuffer: 10 * 1024 * 1024,
+      maxBuffer: 100 * 1024 * 1024,
       windowsHide: true,
     });
     return stdout;
@@ -498,11 +498,11 @@ async function writeBroadcastAnalyticsEvents(events) {
 
 async function readInfobipApis() {
   const stored = await getStoredValue(INFOBIP_APIS_KEY);
-  return Array.isArray(stored) ? stored.filter((item) => item && typeof item === "object") : [];
+  return Array.isArray(stored) ? stored.filter((item) => item && typeof item === "object").map(sanitizeInfobipApi) : [];
 }
 
 async function writeInfobipApis(items) {
-  await setStoredValue(INFOBIP_APIS_KEY, items);
+  await setStoredValue(INFOBIP_APIS_KEY, items.map(sanitizeInfobipApi));
 }
 
 function normalizeInfobipBaseUrl(value) {
@@ -571,6 +571,27 @@ function extractInfobipList(payload) {
   return [];
 }
 
+function sanitizeInfobipSender(sender) {
+  const source = sender && typeof sender === "object" ? sender : {};
+  return {
+    id: String(firstNonEmpty(source.id, source.senderId, source.sender_id, source.sender, source.number, "")),
+    apiId: String(source.apiId || ""),
+    apiName: String(source.apiName || ""),
+    sender: String(firstNonEmpty(source.sender, source.senderNumber, source.sender_number, source.number, source.phoneNumber, "")),
+    name: String(firstNonEmpty(source.name, source.displayName, source.display_name, source.verifiedName, source.sender, "")),
+    status: String(firstNonEmpty(source.status, source.state, source.connectionStatus, source.enabled, "disponivel")),
+    channel: String(firstNonEmpty(source.channel, source.type, "WhatsApp")),
+  };
+}
+
+function sanitizeInfobipApi(api) {
+  const source = api && typeof api === "object" ? api : {};
+  const senders = Array.isArray(source.senders)
+    ? source.senders.map(sanitizeInfobipSender).filter((sender) => sender.sender || sender.name)
+    : [];
+  return { ...source, senders };
+}
+
 function normalizeInfobipSender(api, raw, index) {
   const source = raw && typeof raw === "object" ? raw : {};
   const sender = firstNonEmpty(
@@ -605,7 +626,6 @@ function normalizeInfobipSender(api, raw, index) {
     name,
     status: firstNonEmpty(source.status, source.state, source.enabled, "disponivel"),
     channel: firstNonEmpty(source.channel, source.type, "WhatsApp"),
-    raw: source,
   };
 }
 
@@ -696,6 +716,7 @@ async function handleInfobipApis(request, response) {
             return type.includes(apiType) || apiType.includes(type);
           })
         : apis;
+      await writeInfobipApis(apis);
       sendJson(response, 200, { ok: true, data: filtered });
       return true;
     }
