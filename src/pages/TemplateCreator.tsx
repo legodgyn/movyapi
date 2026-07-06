@@ -702,7 +702,7 @@ export function TemplateCreator() {
 
       {sendOpen ? (
         <div className="modal-backdrop">
-          <section className="card meta-approval-modal">
+          <section className="card meta-approval-modal infobip-approval-modal">
             <div className="meta-modal-header">
               <div>
                 <h2><Send size={18} /> Enviar Template para Infobip</h2>

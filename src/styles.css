@@ -1822,15 +1822,71 @@ a {
 .infobip-inline-progress {
   background: hsl(var(--md-surface-container-low) / .66);
   box-shadow: none;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 220px minmax(0, 1fr);
   max-height: none;
   overflow: visible;
   padding: 18px;
   width: 100%;
 }
 
+.infobip-approval-modal {
+  display: grid;
+  gap: 16px;
+  max-height: calc(100vh - 56px);
+  padding: 20px;
+  width: min(980px, calc(100vw - 56px));
+}
+
+.infobip-approval-modal > .grid.cols-2 {
+  grid-template-columns: minmax(0, 1fr) 180px;
+}
+
+.infobip-approval-modal .approval-summary dl {
+  grid-template-columns: 130px minmax(0, 1fr);
+}
+
+.infobip-approval-modal .modal-actions {
+  border-top: 1px solid hsl(var(--md-outline-variant));
+  padding-top: 12px;
+}
+
+.infobip-inline-progress .meta-send-header {
+  grid-column: 1 / -1;
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+
 .infobip-inline-progress .send-progress-ring {
-  height: 148px;
-  width: 148px;
+  grid-column: 1;
+  grid-row: 2;
+  height: 170px;
+  width: 170px;
+}
+
+.infobip-inline-progress .send-stats-grid {
+  grid-column: 1;
+  grid-row: 3;
+  grid-template-columns: 1fr;
+}
+
+.infobip-inline-progress .send-stat-card {
+  min-height: 74px;
+  padding: 12px;
+}
+
+.infobip-inline-progress .send-stat-card strong {
+  font-size: 24px;
+}
+
+.infobip-inline-progress .send-results-panel {
+  grid-column: 2;
+  grid-row: 2 / span 2;
+  min-width: 0;
+}
+
+.infobip-inline-progress .send-result-list {
+  max-height: 382px;
 }
 
 .api-manager-layout {
@@ -2051,8 +2107,26 @@ a {
     padding: 22px;
   }
 
+  .infobip-approval-modal {
+    width: min(680px, calc(100vw - 28px));
+  }
+
+  .infobip-approval-modal > .grid.cols-2,
+  .infobip-approval-modal .approval-summary dl,
+  .infobip-inline-progress {
+    grid-template-columns: 1fr;
+  }
+
   .meta-send-header {
     grid-template-columns: 48px minmax(0, 1fr) auto;
+  }
+
+  .infobip-inline-progress .meta-send-header,
+  .infobip-inline-progress .send-progress-ring,
+  .infobip-inline-progress .send-stats-grid,
+  .infobip-inline-progress .send-results-panel {
+    grid-column: 1;
+    grid-row: auto;
   }
 
   .send-stats-grid {
