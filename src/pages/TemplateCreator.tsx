@@ -223,6 +223,12 @@ export function TemplateCreator() {
   const variableIndexes = useMemo(() => bodyVariables(body), [body]);
   const sequenceError = useMemo(() => variableSequenceError(variableIndexes), [variableIndexes]);
   const canSend = Boolean(apiId && selectedSenderNumber && normalizeName(name) && !sequenceError && variableIndexes.every((index) => variables[index]?.trim()));
+  const generatedTemplateNames = useMemo(() => {
+    const baseName = normalizeName(name);
+    if (!baseName) return [];
+    return Array.from({ length: Math.min(quantity, 6) }, (_, index) => batchTemplateName(baseName, index + 1, quantity));
+  }, [name, quantity]);
+  const hiddenGeneratedTemplates = Math.max(0, quantity - generatedTemplateNames.length);
 
   const preview = useMemo(() => {
     return variableIndexes.reduce(
@@ -703,14 +709,15 @@ export function TemplateCreator() {
       {sendOpen ? (
         <div className="modal-backdrop">
           <section className="card meta-approval-modal infobip-approval-modal">
-            <div className="meta-modal-header">
+            <div className="meta-modal-header infobip-send-heading">
               <div>
                 <h2><Send size={18} /> Enviar Template para Infobip</h2>
                 <p>Confirme a API, remetente e quantidade antes de criar.</p>
               </div>
               <button className="icon-button" type="button" onClick={() => setSendOpen(false)}><X size={16} /></button>
             </div>
-            <div className="grid cols-2">
+            <div className="infobip-send-body">
+              <div className="infobip-send-setup">
               <div className="field">
                 <label>API Infobip</label>
                 <select className="select" value={apiId} onChange={(event) => setApiId(event.target.value)}>
@@ -721,7 +728,7 @@ export function TemplateCreator() {
                 <label>Quantidade</label>
                 <input className="input" max={50} min={1} type="number" value={quantity} onChange={(event) => setQuantity(Math.max(1, Math.min(50, Number(event.target.value) || 1)))} />
               </div>
-            </div>
+              </div>
             <div className="approval-summary">
               <h3><FileText size={16} /> Resumo do Template</h3>
               <dl>
@@ -732,6 +739,12 @@ export function TemplateCreator() {
                 <dt>Categoria</dt><dd>{category}</dd>
                 <dt>Idioma</dt><dd>{language}</dd>
               </dl>
+              {generatedTemplateNames.length ? (
+                <div className="infobip-name-preview" aria-label="Templates que serao criados">
+                  {generatedTemplateNames.map((templateName) => <span key={templateName}>{templateName}</span>)}
+                  {hiddenGeneratedTemplates ? <span>+{hiddenGeneratedTemplates}</span> : null}
+                </div>
+              ) : null}
             </div>
             <div className="modal-actions">
               <button className="button secondary" type="button" onClick={() => setSendOpen(false)}>Cancelar</button>
@@ -770,6 +783,7 @@ export function TemplateCreator() {
                 </div>
               </div>
             ) : null}
+            </div>
           </section>
         </div>
       ) : null}
