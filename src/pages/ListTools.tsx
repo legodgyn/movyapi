@@ -769,9 +769,9 @@ function TreatListPage() {
   const [ignoreFiles, setIgnoreFiles] = useState<File[]>([]);
   const [labelCount, setLabelCount] = useState(1);
   const [prefix, setPrefix] = useState("");
-  const [removeDuplicates, setRemoveDuplicates] = useState(true);
-  const [discardWithoutName, setDiscardWithoutName] = useState(true);
-  const [discardInvalidPhones, setDiscardInvalidPhones] = useState(true);
+  const removeDuplicates = true;
+  const discardWithoutName = true;
+  const discardInvalidPhones = true;
   const [status, setStatus] = useState("");
   const [isReadingFiles, setIsReadingFiles] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -1386,35 +1386,6 @@ function TreatListPage() {
               : "Adicionar lista de ignore (opcional)"}
           </span>
         </label>
-      </section>
-
-      <section className="card list-card settings-card">
-        <h2>
-          <span className="card-title-icon">
-            <Settings size={18} />
-          </span>
-          Configurações
-        </h2>
-
-        <div className="list-settings-grid compact-settings-grid">
-          <div className="checkbox-stack">
-            <CheckOption
-              checked={removeDuplicates}
-              label="Remover duplicados automaticamente"
-              onChange={setRemoveDuplicates}
-            />
-            <CheckOption
-              checked={discardWithoutName}
-              label="Descartar leads sem nome"
-              onChange={setDiscardWithoutName}
-            />
-            <CheckOption
-              checked={discardInvalidPhones}
-              label="Descartar telefones inválidos"
-              onChange={setDiscardInvalidPhones}
-            />
-          </div>
-        </div>
       </section>
 
       </>
