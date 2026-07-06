@@ -190,7 +190,7 @@ export function ApiManager() {
       const fallback = senderFromApi(api);
       const next = normalized.length ? normalized : fallback ? [fallback] : [];
       setSenderOptions((current) => ({ ...current, [api.id]: next }));
-      setStatus(next.length ? `${next.length} remetente(s) encontrado(s).` : "Nenhum remetente retornado pela Infobip.");
+      setStatus(next.length ? `${next.length} remetente(s) encontrado(s). Escolha quais deseja sincronizar no sistema.` : "Nenhum remetente retornado pela Infobip.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha ao sincronizar remetentes.";
       const fallback = senderFromApi(api);
@@ -302,7 +302,7 @@ export function ApiManager() {
                     <span className="api-connection-icon"><Wifi size={18} /></span>
                     <div>
                       <strong>{labelOf(api, "API Infobip")}</strong>
-                      <span>{api.api_type || "INFOBIP"}{sender ? ` • ${sender}` : ""}</span>
+                      <span>{api.api_type || "INFOBIP"}{sender ? ` - ${sender}` : ""}</span>
                     </div>
                   </div>
                   <div className="api-connection-meta">
@@ -313,13 +313,13 @@ export function ApiManager() {
                   <div className="button-row">
                     <button className="button secondary compact" type="button" onClick={() => edit(api)}>Editar</button>
                     <button className="button secondary compact" disabled={syncingApiId === api.id} type="button" onClick={() => syncSenders(api)}>
-                      {syncingApiId === api.id ? <RefreshCw className="spin" size={14} /> : <Smartphone size={14} />} Sincronizar remetentes
+                      {syncingApiId === api.id ? <RefreshCw className="spin" size={14} /> : <Smartphone size={14} />} Buscar remetentes
                     </button>
                     <button className="button secondary compact" type="button" onClick={() => remove(api)}><Trash2 size={14} /> Remover</button>
                   </div>
                   {options.length ? (
                     <div className="api-sender-picker">
-                      <strong>Remetentes disponíveis</strong>
+                      <strong>Remetentes encontrados na Infobip</strong>
                       {options.map((option) => {
                         const isIntegrated = integratedSenders.some((item) => item.id === option.id);
                         return (
@@ -327,10 +327,10 @@ export function ApiManager() {
                             <span className="api-connection-icon"><Smartphone size={16} /></span>
                             <div>
                               <strong>{option.name}</strong>
-                              <span>{option.sender || "Sender sem número"} • {option.status}</span>
+                              <span>{option.sender || "Sender sem numero"} - {option.status}</span>
                             </div>
                             <button className="button compact" disabled={isIntegrated} type="button" onClick={() => integrateSender(option)}>
-                              <Link2 size={14} /> {isIntegrated ? "Integrado" : "Integrar"}
+                              <Link2 size={14} /> {isIntegrated ? "Sincronizado" : "Sincronizar no sistema"}
                             </button>
                           </div>
                         );
@@ -345,7 +345,7 @@ export function ApiManager() {
                           <span className="api-connection-icon"><CheckCircle2 size={16} /></span>
                           <div>
                             <strong>{item.name}</strong>
-                            <span>{item.sender} • pronto para Templates</span>
+                            <span>{item.sender} - pronto para Templates</span>
                           </div>
                           <button className="button secondary compact" type="button" onClick={() => removeIntegratedSender(item)}>Remover</button>
                         </div>
