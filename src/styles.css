@@ -2506,9 +2506,19 @@ a {
   min-width: 0;
 }
 
+.check-history-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
 .check-history-main strong {
   color: hsl(var(--foreground));
   font-size: 14px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .check-history-main small {

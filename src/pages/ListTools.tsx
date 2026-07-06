@@ -79,6 +79,7 @@ type TreatListCheckSession = {
   version: 1;
   savedAt: string;
   taskId: string;
+  sourceFileNames?: string[];
   rowsToCheck: ListRow[];
   processStats: ProcessStats | null;
   checkStats: CheckStats;
@@ -724,6 +725,13 @@ function formatHistoryDate(value: string) {
   });
 }
 
+function formatHistoryFileNames(names: string[] | undefined) {
+  const cleanNames = (names ?? []).map((name) => name.trim()).filter(Boolean);
+  if (!cleanNames.length) return "";
+  if (cleanNames.length === 1) return cleanNames[0];
+  return `${cleanNames[0]} + ${cleanNames.length - 1} arquivo(s)`;
+}
+
 function writeStoredCheckHistory(history: TreatListCheckSession[]) {
   localStorage.setItem(TREAT_LIST_CHECK_HISTORY_KEY, JSON.stringify(history.slice(0, TREAT_LIST_CHECK_HISTORY_LIMIT)));
 }
@@ -779,6 +787,7 @@ function TreatListPage() {
   const [activeTab, setActiveTab] = useState<TreatListTab>("process");
   const [processMode, setProcessMode] = useState<TreatProcessMode>("checked");
   const checkRunRef = useRef(0);
+  const sourceFileNamesRef = useRef<string[]>([]);
 
   const checkInProgress = checkStatus === "creating" || checkStatus === "polling" || checkStatus === "downloading";
   const canProcess = sourceRows.length > 0 && !isReadingFiles && !isProcessing && !checkInProgress;
@@ -811,6 +820,7 @@ function TreatListPage() {
   function saveCheckSession(session: Omit<TreatListCheckSession, "version" | "savedAt">) {
     const nextSession: TreatListCheckSession = {
       ...session,
+      sourceFileNames: session.sourceFileNames?.length ? session.sourceFileNames : sourceFileNamesRef.current,
       version: 1,
       savedAt: new Date().toISOString(),
     };
@@ -844,6 +854,7 @@ function TreatListPage() {
       setActivatedDownload(null);
     }
     localStorage.setItem(TREAT_LIST_CHECK_SESSION_KEY, JSON.stringify(session));
+    sourceFileNamesRef.current = session.sourceFileNames ?? [];
     setFiles([]);
     setSourceRows([]);
     setActiveTab("process");
@@ -913,11 +924,13 @@ function TreatListPage() {
   }
 
   async function loadSourceFiles(nextFiles: File[]) {
+    clearTreatResults();
+    sourceFileNamesRef.current = nextFiles.map((file) => file.name);
     setFiles(nextFiles);
     setSourceRows([]);
-    clearTreatResults();
 
     if (!nextFiles.length) {
+      sourceFileNamesRef.current = [];
       setStatus("");
       return;
     }
@@ -1438,7 +1451,12 @@ function TreatListPage() {
                 <div className={`check-history-row ${isActiveTask ? "active" : ""}`} key={item.taskId}>
                   <div className="check-history-main">
                     <span className={`check-history-status status-${item.checkStatus}`}>{statusText}</span>
-                    <strong>Tarefa {item.taskId}</strong>
+                    <div className="check-history-title">
+                      <strong title={formatHistoryFileNames(item.sourceFileNames) || `Tarefa ${item.taskId}`}>
+                        {formatHistoryFileNames(item.sourceFileNames) || `Tarefa ${item.taskId}`}
+                      </strong>
+                      {formatHistoryFileNames(item.sourceFileNames) ? <small>Tarefa {item.taskId}</small> : null}
+                    </div>
                     <small>{formatHistoryDate(item.savedAt)}</small>
                   </div>
                   <div className="check-history-metrics">
