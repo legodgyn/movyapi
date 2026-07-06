@@ -82,6 +82,13 @@ function senderFromApi(api: InfobipApi): InfobipSender | null {
   };
 }
 
+function cachedSendersFromApi(api: InfobipApi) {
+  const rows = Array.isArray(api.senders) ? api.senders : [];
+  return rows
+    .map((row, index) => normalizeSender(api, row as Record<string, unknown>, index))
+    .filter((option) => option.sender || option.name);
+}
+
 function readIntegratedSenders(): InfobipSender[] {
   try {
     const items = JSON.parse(localStorage.getItem(LOCAL_INFOBIP_SENDERS_KEY) || "[]") as InfobipSender[];
@@ -184,6 +191,10 @@ export function ApiManager() {
   async function syncSenders(api: InfobipApi) {
     setSyncingApiId(api.id);
     setStatus(`Buscando remetentes de ${labelOf(api, "Infobip")}...`);
+    const cachedOptions = cachedSendersFromApi(api);
+    if (cachedOptions.length) {
+      setSenderOptions((current) => ({ ...current, [api.id]: cachedOptions }));
+    }
     try {
       const rows = await infobipApis.syncNormalizedSenders(api.id);
       const normalized = rows.map((row, index) => normalizeSender(api, row, index)).filter((sender) => sender.sender || sender.name);
@@ -200,6 +211,11 @@ export function ApiManager() {
       setStatus(next.length ? `${next.length} remetente(s) encontrado(s). Escolha quais deseja sincronizar no sistema.` : "Nenhum remetente retornado pela Infobip.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha ao sincronizar remetentes.";
+      if (cachedOptions.length) {
+        setSenderOptions((current) => ({ ...current, [api.id]: cachedOptions }));
+        setStatus(`Infobip: ${message} Mostrando ${cachedOptions.length} remetente(s) ja sincronizado(s).`);
+        return;
+      }
       const fallback = senderFromApi(api);
       if (fallback) {
         setSenderOptions((current) => ({ ...current, [api.id]: [fallback] }));
@@ -301,10 +317,7 @@ export function ApiManager() {
               const baseUrl = apiValue(api, "base_url", "baseUrl", "url");
               const sender = apiValue(api, "sender_number", "senderNumber", "phone_number");
               const token = apiValue(api, "token", "api_key", "apiKey", "authorization");
-              const cachedRows = Array.isArray(api.senders) ? api.senders : [];
-              const cachedOptions = cachedRows
-                .map((row, index) => normalizeSender(api, row as Record<string, unknown>, index))
-                .filter((option) => option.sender || option.name);
+              const cachedOptions = cachedSendersFromApi(api);
               const options = senderOptions[api.id] || cachedOptions;
               const connected = integratedSenders.filter((item) => item.apiId === api.id);
               return (

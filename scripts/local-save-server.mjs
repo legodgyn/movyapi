@@ -643,7 +643,7 @@ async function fetchInfobipJson(api, path) {
     throw error;
   }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), 8000);
   let upstream;
   try {
     upstream = await fetch(`${baseUrl}${path}`, {
@@ -683,7 +683,7 @@ async function fetchInfobipJson(api, path) {
 }
 
 async function syncInfobipSenders(api) {
-  const attempts = ["/whatsapp/1/senders", "/whatsapp/1/senders?limit=1000"];
+  const attempts = ["/whatsapp/1/senders?limit=1000", "/whatsapp/1/senders"];
   let lastError = null;
   for (const path of attempts) {
     try {
@@ -694,7 +694,7 @@ async function syncInfobipSenders(api) {
       return { payload, senders };
     } catch (error) {
       lastError = error;
-      if (error?.statusCode && error.statusCode >= 400 && error.statusCode < 500) throw error;
+      if (error?.statusCode === 504 || (error?.statusCode && error.statusCode >= 400 && error.statusCode < 500)) throw error;
     }
   }
   throw lastError || new Error("Nao foi possivel consultar remetentes na Infobip.");
@@ -794,6 +794,7 @@ async function handleInfobipApis(request, response) {
         result = await syncInfobipSenders(api);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Falha ao sincronizar remetentes.";
+        const cachedSenders = Array.isArray(api.senders) ? api.senders : [];
         const nextApi = {
           ...api,
           last_sync_at: "",
@@ -801,6 +802,16 @@ async function handleInfobipApis(request, response) {
           base_url: normalizeInfobipBaseUrl(api.base_url || api.baseUrl || api.url),
         };
         await writeInfobipApis([nextApi, ...apis.filter((item) => String(item.id) !== id)]);
+        if (cachedSenders.length) {
+          sendJson(response, 200, {
+            ok: true,
+            data: cachedSenders,
+            count: cachedSenders.length,
+            cached: true,
+            warning: message,
+          });
+          return true;
+        }
         throw error;
       }
       const nextApi = {
