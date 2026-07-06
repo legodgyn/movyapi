@@ -41,6 +41,7 @@ const WHATSAPP_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const FLOW_RUNTIME_KEY = "movy.flowRuntime";
 const BROADCAST_ANALYTICS_KEY = "movy.broadcastAnalyticsEvents";
 const CONVERSATION_MESSAGES_KEY = "movy.conversationMessages";
+const INFOBIP_APIS_KEY = "movy.infobipApis";
 const graphApiBase = "https://graph.facebook.com/v24.0";
 let lastBroadcastDebug = null;
 
@@ -478,6 +479,255 @@ async function readBroadcastAnalyticsEvents() {
 
 async function writeBroadcastAnalyticsEvents(events) {
   await setStoredValue(BROADCAST_ANALYTICS_KEY, events.slice(-50000));
+}
+
+async function readInfobipApis() {
+  const stored = await getStoredValue(INFOBIP_APIS_KEY);
+  return Array.isArray(stored) ? stored.filter((item) => item && typeof item === "object") : [];
+}
+
+async function writeInfobipApis(items) {
+  await setStoredValue(INFOBIP_APIS_KEY, items);
+}
+
+function normalizeInfobipBaseUrl(value) {
+  let url = String(value || "").trim();
+  if (!url) return "";
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  return url.replace(/\/+$/, "");
+}
+
+function normalizeInfobipToken(value) {
+  return String(value || "").trim().replace(/^App\s+/i, "");
+}
+
+function infobipErrorMessage(status, payload, raw) {
+  const record = payload && typeof payload === "object" ? payload : {};
+  const requestError = record.requestError && typeof record.requestError === "object" ? record.requestError : {};
+  const serviceException =
+    requestError.serviceException && typeof requestError.serviceException === "object"
+      ? requestError.serviceException
+      : {};
+  return (
+    serviceException.text ||
+    serviceException.message ||
+    record.message ||
+    record.error ||
+    String(raw || "").trim() ||
+    `Infobip retornou HTTP ${status}`
+  );
+}
+
+function extractInfobipList(payload) {
+  if (Array.isArray(payload)) return payload;
+  const record = payload && typeof payload === "object" ? payload : {};
+  for (const key of ["senders", "items", "results", "data", "channels"]) {
+    if (Array.isArray(record[key])) return record[key];
+  }
+  if (record.sender || record.senderNumber || record.number || record.phoneNumber) return [record];
+  return [];
+}
+
+function normalizeInfobipSender(api, raw, index) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const sender = firstNonEmpty(
+    source.sender,
+    source.senderNumber,
+    source.sender_number,
+    source.number,
+    source.phoneNumber,
+    source.phone_number,
+    source.phone,
+    source.from,
+    source.address,
+    source.id
+  );
+  const name = firstNonEmpty(
+    source.name,
+    source.displayName,
+    source.display_name,
+    source.verifiedName,
+    source.verified_name,
+    source.businessName,
+    source.business_name,
+    sender,
+    `Remetente ${index + 1}`
+  );
+  const id = firstNonEmpty(source.id, source.senderId, source.sender_id, sender, `${api.id}-${index}`);
+  return {
+    id: String(id),
+    apiId: api.id,
+    apiName: firstNonEmpty(api.name, api.label, "Infobip"),
+    sender,
+    name,
+    status: firstNonEmpty(source.status, source.state, source.enabled, "disponivel"),
+    channel: firstNonEmpty(source.channel, source.type, "WhatsApp"),
+    raw: source,
+  };
+}
+
+async function fetchInfobipJson(api, path) {
+  const baseUrl = normalizeInfobipBaseUrl(api.base_url || api.baseUrl || api.url);
+  const token = normalizeInfobipToken(api.token || api.api_key || api.apiKey || api.authorization);
+  if (!baseUrl) {
+    const error = new Error("Informe a Base URL da Infobip.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!token) {
+    const error = new Error("Informe o token/API Key da Infobip.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const upstream = await fetch(`${baseUrl}${path}`, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `App ${token}`,
+      "User-Agent": "MovyApi/1.0",
+    },
+  });
+  const raw = await upstream.text();
+  let parsed = {};
+  try {
+    parsed = raw ? JSON.parse(raw) : {};
+  } catch {
+    parsed = { raw };
+  }
+  if (!upstream.ok) {
+    const error = new Error(infobipErrorMessage(upstream.status, parsed, raw));
+    error.statusCode = upstream.status;
+    error.payload = parsed;
+    throw error;
+  }
+  return parsed;
+}
+
+async function syncInfobipSenders(api) {
+  const attempts = ["/whatsapp/1/senders", "/whatsapp/1/senders?limit=1000"];
+  let lastError = null;
+  for (const path of attempts) {
+    try {
+      const payload = await fetchInfobipJson(api, path);
+      const senders = extractInfobipList(payload)
+        .map((item, index) => normalizeInfobipSender(api, item, index))
+        .filter((sender) => sender.sender || sender.name);
+      return { payload, senders };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("Nao foi possivel consultar remetentes na Infobip.");
+}
+
+async function handleInfobipApis(request, response) {
+  try {
+    const url = new URL(request.url || "", `http://${request.headers.host}`);
+    const apis = await readInfobipApis();
+    const apiMatch = url.pathname.match(/^\/infobip\/apis\/([^/]+)$/);
+    const senderMatch = url.pathname.match(/^\/infobip\/apis\/([^/]+)\/senders$/);
+    const syncMatch = url.pathname.match(/^\/infobip\/apis\/([^/]+)\/senders\/sync$/);
+
+    if (request.method === "GET" && url.pathname === "/infobip/apis") {
+      const apiType = String(url.searchParams.get("api_type") || "").toLowerCase();
+      const filtered = apiType
+        ? apis.filter((api) => {
+            const type = firstNonEmpty(api.api_type, api.provider, "INFOBIP").toLowerCase();
+            return type.includes(apiType) || apiType.includes(type);
+          })
+        : apis;
+      sendJson(response, 200, { ok: true, data: filtered });
+      return true;
+    }
+
+    if (request.method === "POST" && url.pathname === "/infobip/apis") {
+      const body = JSON.parse((await readRequestBody(request)).toString("utf8") || "{}");
+      const now = new Date().toISOString();
+      const item = {
+        ...body,
+        id: body.id || `infobip-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        name: firstNonEmpty(body.name, body.label, "Infobip"),
+        label: firstNonEmpty(body.label, body.name, "Infobip"),
+        api_type: firstNonEmpty(body.api_type, body.provider, "INFOBIP"),
+        provider: firstNonEmpty(body.provider, body.api_type, "infobip").toLowerCase(),
+        base_url: normalizeInfobipBaseUrl(body.base_url || body.baseUrl || body.url),
+        token: normalizeInfobipToken(body.token || body.api_key || body.apiKey || body.authorization),
+        sender_number: firstNonEmpty(body.sender_number, body.senderNumber, body.phone_number),
+        created_at: body.created_at || now,
+        updated_at: now,
+      };
+      await writeInfobipApis([item, ...apis.filter((api) => String(api.id) !== String(item.id))]);
+      sendJson(response, 200, { ok: true, data: item });
+      return true;
+    }
+
+    if (apiMatch && request.method === "PUT") {
+      const id = decodeURIComponent(apiMatch[1]);
+      const body = JSON.parse((await readRequestBody(request)).toString("utf8") || "{}");
+      const current = apis.find((api) => String(api.id) === id) || {};
+      const item = {
+        ...current,
+        ...body,
+        id,
+        name: firstNonEmpty(body.name, body.label, current.name, current.label, "Infobip"),
+        label: firstNonEmpty(body.label, body.name, current.label, current.name, "Infobip"),
+        api_type: firstNonEmpty(body.api_type, body.provider, current.api_type, "INFOBIP"),
+        provider: firstNonEmpty(body.provider, body.api_type, current.provider, "infobip").toLowerCase(),
+        base_url: normalizeInfobipBaseUrl(body.base_url || body.baseUrl || body.url || current.base_url || current.baseUrl || current.url),
+        token: normalizeInfobipToken(body.token || body.api_key || body.apiKey || body.authorization || current.token || current.api_key),
+        sender_number: firstNonEmpty(body.sender_number, body.senderNumber, body.phone_number, current.sender_number, current.senderNumber),
+        updated_at: new Date().toISOString(),
+      };
+      await writeInfobipApis([item, ...apis.filter((api) => String(api.id) !== id)]);
+      sendJson(response, 200, { ok: true, data: item });
+      return true;
+    }
+
+    if (apiMatch && request.method === "DELETE") {
+      const id = decodeURIComponent(apiMatch[1]);
+      await writeInfobipApis(apis.filter((api) => String(api.id) !== id));
+      sendJson(response, 200, { ok: true });
+      return true;
+    }
+
+    if (senderMatch && request.method === "GET") {
+      const id = decodeURIComponent(senderMatch[1]);
+      const api = apis.find((item) => String(item.id) === id);
+      if (!api) {
+        sendJson(response, 404, { ok: false, error: "api-not-found", message: "API Infobip nao encontrada." });
+        return true;
+      }
+      sendJson(response, 200, { ok: true, data: Array.isArray(api.senders) ? api.senders : [] });
+      return true;
+    }
+
+    if (syncMatch && request.method === "POST") {
+      const id = decodeURIComponent(syncMatch[1]);
+      const api = apis.find((item) => String(item.id) === id);
+      if (!api) {
+        sendJson(response, 404, { ok: false, error: "api-not-found", message: "API Infobip nao encontrada." });
+        return true;
+      }
+      const result = await syncInfobipSenders(api);
+      const nextApi = {
+        ...api,
+        senders: result.senders,
+        last_sync_at: new Date().toISOString(),
+        last_sync_error: "",
+      };
+      await writeInfobipApis([nextApi, ...apis.filter((item) => String(item.id) !== id)]);
+      sendJson(response, 200, { ok: true, data: result.senders, raw: result.payload });
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    sendJson(response, error?.statusCode || 500, {
+      ok: false,
+      error: error instanceof Error ? error.message : "infobip-failed",
+      details: error?.payload || null,
+    });
+    return true;
+  }
 }
 
 function asRecord(value) {
@@ -2163,6 +2413,10 @@ createServer(async (request, response) => {
   if (request.method === "GET" && request.url?.startsWith("/broadcast/debug-last")) {
     sendJson(response, 200, { ok: true, debug: lastBroadcastDebug });
     return;
+  }
+
+  if (request.url?.startsWith("/infobip/")) {
+    if (await handleInfobipApis(request, response)) return;
   }
 
   if (request.url?.startsWith("/sms24h/")) {

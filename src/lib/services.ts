@@ -1,14 +1,39 @@
 import { apiDelete, apiGet, apiPost, apiPut, unwrapList } from "./api";
+import { config } from "./config";
 import type { Campaign, ContactTag, InfobipApi, MediaItem, SavedFlow, SavedTemplate, User } from "./types";
 
+function localApiBase() {
+  const isLocal =
+    typeof window !== "undefined" &&
+    /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname);
+  if (isLocal) return config.localBackendUrl.replace(/\/$/, "");
+  return (config.mediaBackendUrl || `${config.publicAppUrl.replace(/\/$/, "")}/local-api` || config.localBackendUrl).replace(/\/$/, "");
+}
+
+async function localJson<T = unknown>(path: string, init?: RequestInit) {
+  const response = await fetch(`${localApiBase()}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers || {}),
+    },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || (data && typeof data === "object" && (data as Record<string, unknown>).ok === false)) {
+    const record = data as Record<string, unknown>;
+    throw new Error(String(record.message || record.error || `HTTP ${response.status}`));
+  }
+  return data as T;
+}
+
 export const infobipApis = {
-  list: (apiType?: string) => apiGet<unknown>("/infobip/apis", apiType ? { api_type: apiType } : undefined),
+  list: (apiType?: string) => localJson<unknown>(`/infobip/apis${apiType ? `?api_type=${encodeURIComponent(apiType)}` : ""}`),
   normalizedList: async (apiType?: string) => unwrapList<InfobipApi>(await infobipApis.list(apiType)),
-  save: (payload: unknown) => apiPost("/infobip/apis", payload),
-  update: (id: string, payload: unknown) => apiPut(`/infobip/apis/${id}`, payload),
-  remove: (id: string) => apiDelete(`/infobip/apis/${id}`),
-  senders: (id: string) => apiGet<unknown>(`/infobip/apis/${id}/senders`),
-  syncSenders: (id: string) => apiPost<unknown>(`/infobip/apis/${id}/senders/sync`),
+  save: (payload: unknown) => localJson("/infobip/apis", { body: JSON.stringify(payload), method: "POST" }),
+  update: (id: string, payload: unknown) => localJson(`/infobip/apis/${encodeURIComponent(id)}`, { body: JSON.stringify(payload), method: "PUT" }),
+  remove: (id: string) => localJson(`/infobip/apis/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  senders: (id: string) => localJson<unknown>(`/infobip/apis/${encodeURIComponent(id)}/senders`),
+  syncSenders: (id: string) => localJson<unknown>(`/infobip/apis/${encodeURIComponent(id)}/senders/sync`, { method: "POST" }),
   normalizedSenders: async (id: string) => {
     const payload = await infobipApis.syncSenders(id).catch(() => infobipApis.senders(id));
     return unwrapList<Record<string, unknown>>(payload);
