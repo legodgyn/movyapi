@@ -41,6 +41,7 @@ type IntegratedInfobipSender = {
 const LOCAL_INFOBIP_MODELS_KEY = "movy.infobipTemplateModels";
 const LOCAL_INFOBIP_SENT_KEY = "movy.infobipSentTemplates";
 const LOCAL_INFOBIP_SENDERS_KEY = "movy.infobipSenders";
+const INFOBIP_BATCH_DELAY_MS = 700;
 const DEFAULT_TEMPLATE_MEDIA_BASE = `${config.publicAppUrl.replace(/\/$/, "")}/local-api/media/files`;
 const DEFAULT_HEADER_IMAGE =
   import.meta.env.VITE_DEFAULT_TEMPLATE_IMAGE_URL ||
@@ -92,6 +93,14 @@ function normalizeName(value: string) {
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 512);
+}
+
+function batchTemplateName(baseName: string, index: number, total: number) {
+  return total > 1 ? `${baseName}_${index}` : baseName;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function bodyVariables(text: string) {
@@ -355,7 +364,8 @@ export function TemplateCreator() {
     const createdTemplates: SavedTemplate[] = [];
 
     for (let index = 1; index <= quantity; index += 1) {
-      const templateName = quantity > 1 ? `${baseName}_${String(index).padStart(2, "0")}` : baseName;
+      if (index > 1) await wait(INFOBIP_BATCH_DELAY_MS);
+      const templateName = batchTemplateName(baseName, index, quantity);
       const payload = {
         name: templateName,
         provider: "infobip",

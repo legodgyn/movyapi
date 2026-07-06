@@ -643,7 +643,8 @@ async function fetchInfobipJson(api, path, options = {}) {
     throw error;
   }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeoutMs = Number(options.timeoutMs || (String(options.method || "GET").toUpperCase() === "GET" ? 8000 : 30000));
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let upstream;
   try {
     const hasBody = options.body !== undefined && options.body !== null;
@@ -955,7 +956,7 @@ async function handleInfobipApis(request, response) {
       const result = await fetchInfobipJson(
         api,
         `/whatsapp/2/senders/${encodeURIComponent(senderNumber)}/templates`,
-        { method: "POST", body: templatePayload }
+        { method: "POST", body: templatePayload, timeoutMs: 30000 }
       );
       const template = normalizeInfobipTemplateResponse(result, templatePayload, senderNumber);
       sendJson(response, 200, { ok: true, data: template, ...template });
