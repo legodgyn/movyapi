@@ -55,7 +55,6 @@ Temos uma novidade: {{2}}
  
 {{3}}
 
-
 Para {{4}}, use o botão abaixo 👇`;
 
 const variablePools = [
