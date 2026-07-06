@@ -48,7 +48,10 @@ export const savedTemplates = {
   update: (id: string, payload: unknown) => apiPut(`/templates/saved/${id}`, payload),
   remove: (id: string) => apiDelete(`/templates/saved/${id}`),
   createRemote: (apiId: string, senderNumber: string, payload: unknown) =>
-    apiPost("/templates", { apiId, senderNumber, payload }),
+    localJson(`/infobip/apis/${encodeURIComponent(apiId)}/templates`, {
+      body: JSON.stringify({ senderNumber, payload }),
+      method: "POST",
+    }),
 };
 
 export const contacts = {

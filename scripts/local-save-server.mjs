@@ -629,7 +629,7 @@ function normalizeInfobipSender(api, raw, index) {
   };
 }
 
-async function fetchInfobipJson(api, path) {
+async function fetchInfobipJson(api, path, options = {}) {
   const baseUrl = normalizeInfobipBaseUrl(api.base_url || api.baseUrl || api.url);
   const token = normalizeInfobipToken(api.token || api.api_key || api.apiKey || api.authorization);
   if (!baseUrl) {
@@ -646,13 +646,17 @@ async function fetchInfobipJson(api, path) {
   const timeout = setTimeout(() => controller.abort(), 8000);
   let upstream;
   try {
+    const hasBody = options.body !== undefined && options.body !== null;
     upstream = await fetch(`${baseUrl}${path}`, {
+      method: options.method || "GET",
       signal: controller.signal,
       headers: {
         Accept: "application/json",
         Authorization: `App ${token}`,
+        ...(hasBody ? { "Content-Type": "application/json" } : {}),
         "User-Agent": "MovyApi/1.0",
       },
+      ...(hasBody ? { body: JSON.stringify(options.body) } : {}),
     });
   } catch (error) {
     const message = error?.name === "AbortError"
@@ -682,6 +686,101 @@ async function fetchInfobipJson(api, path) {
   return parsed;
 }
 
+function normalizeInfobipLanguage(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "pt_BR";
+  const lower = raw.toLowerCase().replace("-", "_");
+  if (lower === "pt" || lower === "pt_br" || lower.includes("port")) return "pt_BR";
+  if (lower === "es" || lower === "es_es" || lower.includes("span") || lower.includes("espan")) return "es";
+  if (lower === "en" || lower === "en_us" || lower.includes("ing") || lower.includes("engl")) return "en_US";
+  return raw;
+}
+
+function normalizeInfobipCategory(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return "UTILITY";
+  if (raw.includes("MARKET")) return "MARKETING";
+  if (raw.includes("AUTH")) return "AUTHENTICATION";
+  return "UTILITY";
+}
+
+function normalizeInfobipButton(button) {
+  const source = button && typeof button === "object" ? button : {};
+  const kind = String(firstNonEmpty(source.type, source.kind, "QUICK_REPLY")).toUpperCase();
+  const text = firstNonEmpty(source.text, source.title, kind === "URL" ? "CLIQUE AQUI" : "Resposta");
+  if (kind === "URL") {
+    return {
+      type: "URL",
+      text,
+      url: firstNonEmpty(source.url, source.href, "https://movyapi.com.br"),
+    };
+  }
+  return {
+    type: "QUICK_REPLY",
+    text,
+  };
+}
+
+function buildInfobipTemplatePayload(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const name = firstNonEmpty(source.name, source.templateName);
+  const bodyText = firstNonEmpty(source.bodyText, source.body, source.text);
+  if (!name) {
+    const error = new Error("Informe o nome do template.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!bodyText) {
+    const error = new Error("Informe o texto do body do template.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const mediaType = String(firstNonEmpty(source.mediaType, source.headerType, "NONE")).toUpperCase();
+  const mediaUrl = firstNonEmpty(source.mediaUrl, source.headerUrl, source.exampleUrl);
+  const buttons = Array.isArray(source.buttons) ? source.buttons.map(normalizeInfobipButton).filter((button) => button.text) : [];
+  const structure = {
+    type: mediaType === "IMAGE" || mediaType === "VIDEO" || mediaType === "DOCUMENT" ? "MEDIA" : "TEXT",
+    body: {
+      text: bodyText,
+      examples: Array.isArray(source.bodyExamples)
+        ? source.bodyExamples.map((item) => String(item || "exemplo"))
+        : [],
+    },
+  };
+
+  const footerText = firstNonEmpty(source.footerText, source.footer);
+  if (footerText) structure.footer = { text: footerText };
+  if (structure.type === "MEDIA") {
+    structure.header = {
+      format: mediaType,
+      example: mediaUrl,
+    };
+  }
+  if (buttons.length) structure.buttons = buttons;
+
+  return {
+    name,
+    language: normalizeInfobipLanguage(source.language),
+    category: normalizeInfobipCategory(source.category),
+    allowCategoryChange: true,
+    structure,
+  };
+}
+
+function normalizeInfobipTemplateResponse(result, templatePayload, senderNumber) {
+  const record = result && typeof result === "object" ? result : {};
+  return {
+    id: firstNonEmpty(record.id, record.templateId, record.name, templatePayload.name),
+    name: firstNonEmpty(record.name, templatePayload.name),
+    status: firstNonEmpty(record.status, record.templateStatus, record.state, "pending"),
+    language: firstNonEmpty(record.language, templatePayload.language),
+    category: firstNonEmpty(record.category, templatePayload.category),
+    sender_number: senderNumber,
+    response: record,
+  };
+}
+
 async function syncInfobipSenders(api) {
   const attempts = ["/whatsapp/1/senders?limit=1000", "/whatsapp/1/senders"];
   let lastError = null;
@@ -707,6 +806,7 @@ async function handleInfobipApis(request, response) {
     const apiMatch = url.pathname.match(/^\/infobip\/apis\/([^/]+)$/);
     const senderMatch = url.pathname.match(/^\/infobip\/apis\/([^/]+)\/senders$/);
     const syncMatch = url.pathname.match(/^\/infobip\/apis\/([^/]+)\/senders\/sync$/);
+    const templateMatch = url.pathname.match(/^\/infobip\/apis\/([^/]+)\/templates$/);
 
     if (request.method === "GET" && url.pathname === "/infobip/apis") {
       const apiType = String(url.searchParams.get("api_type") || "").toLowerCase();
@@ -823,6 +923,42 @@ async function handleInfobipApis(request, response) {
       };
       await writeInfobipApis([nextApi, ...apis.filter((item) => String(item.id) !== id)]);
       sendJson(response, 200, { ok: true, data: result.senders, count: result.senders.length });
+      return true;
+    }
+
+    if (templateMatch && request.method === "POST") {
+      const id = decodeURIComponent(templateMatch[1]);
+      const api = apis.find((item) => String(item.id) === id);
+      if (!api) {
+        sendJson(response, 404, { ok: false, error: "api-not-found", message: "API Infobip nao encontrada." });
+        return true;
+      }
+      const body = JSON.parse((await readRequestBody(request)).toString("utf8") || "{}");
+      const templatePayload = buildInfobipTemplatePayload(body.payload || body);
+      const senderNumber = onlyDigits(firstNonEmpty(
+        body.senderNumber,
+        body.sender_number,
+        body.sender,
+        asRecord(body.payload).senderNumber,
+        asRecord(asRecord(body.payload).api).senderNumber,
+        api.sender_number,
+        api.senderNumber
+      ));
+      if (!senderNumber) {
+        sendJson(response, 400, {
+          ok: false,
+          error: "missing-sender",
+          message: "Selecione um remetente Infobip antes de enviar o template.",
+        });
+        return true;
+      }
+      const result = await fetchInfobipJson(
+        api,
+        `/whatsapp/2/senders/${encodeURIComponent(senderNumber)}/templates`,
+        { method: "POST", body: templatePayload }
+      );
+      const template = normalizeInfobipTemplateResponse(result, templatePayload, senderNumber);
+      sendJson(response, 200, { ok: true, data: template, ...template });
       return true;
     }
 
