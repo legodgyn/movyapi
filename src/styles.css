@@ -1955,6 +1955,59 @@ a {
   font-size: 12px;
 }
 
+.api-sender-picker-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.api-sender-picker-head strong {
+  color: hsl(var(--md-on-surface-variant));
+  font-size: 12px;
+}
+
+.api-sender-picker-head span {
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.api-sender-filter {
+  align-items: center;
+  background: hsl(var(--md-surface-container-low) / .72);
+  border: 1px solid hsl(var(--md-outline-variant));
+  border-radius: 9px;
+  color: hsl(var(--muted-foreground));
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 38px;
+  padding: 0 11px;
+}
+
+.api-sender-filter input {
+  background: transparent;
+  border: 0;
+  color: hsl(var(--foreground));
+  font: inherit;
+  min-width: 0;
+  outline: 0;
+}
+
+.api-sender-filter input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.api-sender-empty {
+  border: 1px dashed hsl(var(--md-outline-variant));
+  border-radius: 9px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  padding: 14px;
+  text-align: center;
+}
+
 .api-sender-row {
   align-items: center;
   background: hsl(var(--md-surface-container-low) / .72);

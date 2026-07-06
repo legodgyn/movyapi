@@ -1,4 +1,4 @@
-import { CheckCircle2, KeyRound, Link2, Plus, RefreshCw, Save, Server, Smartphone, Trash2, Wifi } from "lucide-react";
+import { CheckCircle2, KeyRound, Link2, Plus, RefreshCw, Save, Search, Server, Smartphone, Trash2, Wifi } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { labelOf } from "../lib/format";
 import { infobipApis } from "../lib/services";
@@ -110,6 +110,7 @@ export function ApiManager() {
   const [saving, setSaving] = useState(false);
   const [syncingApiId, setSyncingApiId] = useState("");
   const [senderOptions, setSenderOptions] = useState<Record<string, InfobipSender[]>>({});
+  const [senderFilters, setSenderFilters] = useState<Record<string, string>>({});
   const [integratedSenders, setIntegratedSenders] = useState<InfobipSender[]>(() => readIntegratedSenders());
 
   const filteredApis = useMemo(() => {
@@ -319,6 +320,12 @@ export function ApiManager() {
               const token = apiValue(api, "token", "api_key", "apiKey", "authorization");
               const cachedOptions = cachedSendersFromApi(api);
               const options = senderOptions[api.id] || cachedOptions;
+              const senderFilter = senderFilters[api.id] || "";
+              const senderSearch = senderFilter.trim().toLowerCase();
+              const visibleOptions = options.filter((option) => {
+                const haystack = `${option.name} ${option.sender} ${option.status} ${option.channel || ""}`.toLowerCase();
+                return !senderSearch || haystack.includes(senderSearch);
+              });
               const connected = integratedSenders.filter((item) => item.apiId === api.id);
               return (
                 <article className="api-connection-card" key={api.id}>
@@ -343,8 +350,19 @@ export function ApiManager() {
                   </div>
                   {options.length ? (
                     <div className="api-sender-picker">
-                      <strong>Remetentes encontrados na Infobip</strong>
-                      {options.map((option) => {
+                      <div className="api-sender-picker-head">
+                        <strong>Remetentes encontrados na Infobip</strong>
+                        <span>{visibleOptions.length} de {options.length}</span>
+                      </div>
+                      <label className="api-sender-filter">
+                        <Search size={15} />
+                        <input
+                          placeholder="Filtrar por nome, numero, status ou canal"
+                          value={senderFilter}
+                          onChange={(event) => setSenderFilters((current) => ({ ...current, [api.id]: event.target.value }))}
+                        />
+                      </label>
+                      {visibleOptions.map((option) => {
                         const isIntegrated = integratedSenders.some((item) => item.id === option.id);
                         return (
                           <div className="api-sender-row" key={option.id}>
@@ -359,6 +377,11 @@ export function ApiManager() {
                           </div>
                         );
                       })}
+                      {!visibleOptions.length ? (
+                        <div className="api-sender-empty">
+                          Nenhum remetente bate com esse filtro.
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                   {connected.length ? (
