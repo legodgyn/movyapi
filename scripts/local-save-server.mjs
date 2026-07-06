@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -437,6 +437,21 @@ async function runSqlite(args) {
   }
 }
 
+function sqliteDotPath(value) {
+  return `"${String(value).replace(/\\/g, "/").replace(/"/g, '\\"')}"`;
+}
+
+async function runSqliteScript(script) {
+  await mkdir(dirname(databasePath), { recursive: true });
+  const tempFile = join(dirname(databasePath), `.movy-${Date.now()}-${Math.random().toString(16).slice(2)}.sql`);
+  await writeFile(tempFile, script, "utf8");
+  try {
+    return await runSqlite([`.read ${sqliteDotPath(tempFile)}`]);
+  } finally {
+    await unlink(tempFile).catch(() => null);
+  }
+}
+
 function sqlValue(value) {
   return `'${String(value ?? "").replace(/'/g, "''")}'`;
 }
@@ -461,9 +476,9 @@ async function getStoredValue(key) {
 
 async function setStoredValue(key, value) {
   if (await ensureDatabase()) {
-    await runSqlite([
-      `insert into app_storage (key, value, updated_at) values (${sqlValue(key)}, ${sqlValue(JSON.stringify(value))}, ${sqlValue(new Date().toISOString())}) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at;`,
-    ]);
+    const sql = `insert into app_storage (key, value, updated_at) values (${sqlValue(key)}, ${sqlValue(JSON.stringify(value))}, ${sqlValue(new Date().toISOString())}) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at;`;
+    if (sql.length > 100000) await runSqliteScript(sql);
+    else await runSqlite([sql]);
     return;
   }
 
