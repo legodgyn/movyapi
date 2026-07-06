@@ -48,7 +48,10 @@ function tokenPreview(value: string) {
 }
 
 function normalizeUrl(value: string) {
-  return value.trim().replace(/\/+$/, "");
+  let url = value.trim();
+  if (!url) return "";
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  return url.replace(/^http:\/\//i, "https://").replace(/\/+$/, "");
 }
 
 function normalizeSender(api: InfobipApi, raw: Record<string, unknown>, index: number): InfobipSender {
@@ -182,20 +185,20 @@ export function ApiManager() {
     setSyncingApiId(api.id);
     setStatus(`Buscando remetentes de ${labelOf(api, "Infobip")}...`);
     try {
-      const rows = await infobipApis.normalizedSenders(api.id);
+      const rows = await infobipApis.syncNormalizedSenders(api.id);
       const normalized = rows.map((row, index) => normalizeSender(api, row, index)).filter((sender) => sender.sender || sender.name);
       const fallback = senderFromApi(api);
       const next = normalized.length ? normalized : fallback ? [fallback] : [];
       setSenderOptions((current) => ({ ...current, [api.id]: next }));
       setStatus(next.length ? `${next.length} remetente(s) encontrado(s).` : "Nenhum remetente retornado pela Infobip.");
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha ao sincronizar remetentes.";
       const fallback = senderFromApi(api);
       if (fallback) {
         setSenderOptions((current) => ({ ...current, [api.id]: [fallback] }));
-        setStatus("Não consegui consultar a Infobip pelo backend. Mostrando o remetente cadastrado manualmente como fallback.");
+        setStatus(`Infobip: ${message} Mostrando o remetente cadastrado manualmente como fallback.`);
       } else {
-        const message = error instanceof Error ? error.message : "Falha ao sincronizar remetentes.";
-        setStatus(message);
+        setStatus(`Infobip: ${message}`);
       }
     } finally {
       setSyncingApiId("");
@@ -306,6 +309,7 @@ export function ApiManager() {
                     <span><CheckCircle2 size={14} /> {baseUrl || "Base URL não informada"}</span>
                     <span><KeyRound size={14} /> {tokenPreview(token)}</span>
                   </div>
+                  {api.last_sync_error ? <p className="hint">Ultima sincronizacao: {String(api.last_sync_error)}</p> : null}
                   <div className="button-row">
                     <button className="button secondary compact" type="button" onClick={() => edit(api)}>Editar</button>
                     <button className="button secondary compact" disabled={syncingApiId === api.id} type="button" onClick={() => syncSenders(api)}>

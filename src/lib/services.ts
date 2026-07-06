@@ -34,6 +34,7 @@ export const infobipApis = {
   remove: (id: string) => localJson(`/infobip/apis/${encodeURIComponent(id)}`, { method: "DELETE" }),
   senders: (id: string) => localJson<unknown>(`/infobip/apis/${encodeURIComponent(id)}/senders`),
   syncSenders: (id: string) => localJson<unknown>(`/infobip/apis/${encodeURIComponent(id)}/senders/sync`, { method: "POST" }),
+  syncNormalizedSenders: async (id: string) => unwrapList<Record<string, unknown>>(await infobipApis.syncSenders(id)),
   normalizedSenders: async (id: string) => {
     const payload = await infobipApis.syncSenders(id).catch(() => infobipApis.senders(id));
     return unwrapList<Record<string, unknown>>(payload);

@@ -494,11 +494,31 @@ function normalizeInfobipBaseUrl(value) {
   let url = String(value || "").trim();
   if (!url) return "";
   if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-  return url.replace(/\/+$/, "");
+  return url.replace(/^http:\/\//i, "https://").replace(/\/+$/, "");
 }
 
 function normalizeInfobipToken(value) {
   return String(value || "").trim().replace(/^App\s+/i, "");
+}
+
+function translateInfobipError(code, text) {
+  const value = `${code || ""} ${text || ""}`.toLowerCase();
+  if (value.includes("e401") || value.includes("valid authentication") || value.includes("authentication credentials")) {
+    return "A API key da Infobip esta invalida, incompleta ou nao pertence a essa Base URL. Confira se a chave e a URL base sao da mesma conta Infobip.";
+  }
+  if (value.includes("e403") || value.includes("permission") || value.includes("forbidden")) {
+    return "A API key foi aceita, mas nao tem permissao para acessar os remetentes WhatsApp.";
+  }
+  if (value.includes("e404") || value.includes("not found")) {
+    return "A URL base da Infobip ou o recurso de remetentes nao foi encontrado. Use a URL base da conta, no formato https://xxxxx.api-xx.infobip.com.";
+  }
+  if (value.includes("e429") || value.includes("too many") || value.includes("rate")) {
+    return "A Infobip limitou as requisicoes temporariamente. Aguarde alguns minutos e tente de novo.";
+  }
+  if (value.includes("timeout") || value.includes("aborted") || value.includes("failed to fetch")) {
+    return "Nao foi possivel conectar na Infobip dentro do tempo limite.";
+  }
+  return "";
 }
 
 function infobipErrorMessage(status, payload, raw) {
@@ -508,14 +528,22 @@ function infobipErrorMessage(status, payload, raw) {
     requestError.serviceException && typeof requestError.serviceException === "object"
       ? requestError.serviceException
       : {};
-  return (
-    serviceException.text ||
-    serviceException.message ||
-    record.message ||
-    record.error ||
-    String(raw || "").trim() ||
-    `Infobip retornou HTTP ${status}`
-  );
+  const parts = [
+    record.errorCode,
+    serviceException.text,
+    serviceException.message,
+    record.description,
+    record.action,
+    record.message,
+    record.error,
+  ]
+    .filter(Boolean)
+    .map((item) => String(item).trim())
+    .filter(Boolean);
+  const text = parts.join(" - ");
+  const translated = translateInfobipError(parts[0] || status, `${text} ${raw || ""}`);
+  if (translated) return text ? `${translated} Detalhe tecnico: ${text}` : translated;
+  return text || String(raw || "").trim() || `Infobip retornou HTTP ${status}`;
 }
 
 function extractInfobipList(payload) {
@@ -707,10 +735,24 @@ async function handleInfobipApis(request, response) {
         sendJson(response, 404, { ok: false, error: "api-not-found", message: "API Infobip nao encontrada." });
         return true;
       }
-      const result = await syncInfobipSenders(api);
+      let result;
+      try {
+        result = await syncInfobipSenders(api);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Falha ao sincronizar remetentes.";
+        const nextApi = {
+          ...api,
+          last_sync_at: "",
+          last_sync_error: message,
+          base_url: normalizeInfobipBaseUrl(api.base_url || api.baseUrl || api.url),
+        };
+        await writeInfobipApis([nextApi, ...apis.filter((item) => String(item.id) !== id)]);
+        throw error;
+      }
       const nextApi = {
         ...api,
         senders: result.senders,
+        base_url: normalizeInfobipBaseUrl(api.base_url || api.baseUrl || api.url),
         last_sync_at: new Date().toISOString(),
         last_sync_error: "",
       };
