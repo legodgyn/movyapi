@@ -49,11 +49,12 @@ const DEFAULT_HEADER_IMAGE =
 const DEFAULT_HEADER_VIDEO =
   import.meta.env.VITE_DEFAULT_TEMPLATE_VIDEO_URL ||
   `${DEFAULT_TEMPLATE_MEDIA_BASE}/movy-default-template-video.mp4`;
-const DEFAULT_BODY = `Olá {{1}}!
+const DEFAULT_BODY = `Olá, {{1}}!
 
-Temos uma novidade: {{2}}.
-
+Temos uma novidade: {{2}}
+ 
 {{3}}
+
 
 Para {{4}}, use o botão abaixo 👇`;
 
@@ -195,12 +196,12 @@ export function TemplateCreator() {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("UTILITY");
   const [language, setLanguage] = useState("pt_BR");
-  const [mediaType, setMediaType] = useState<MediaType>("VIDEO");
+  const [mediaType, setMediaType] = useState<MediaType>("IMAGE");
   const [body, setBody] = useState(DEFAULT_BODY);
   const [footer, setFooter] = useState('Digite "sair" para não receber mais mensagens.');
   const [variables, setVariables] = useState<Record<number, string>>({ 1: variablePools[0][0], 2: variablePools[0][1], 3: variablePools[0][2], 4: variablePools[0][3] });
   const [buttons, setButtons] = useState<TemplateButton[]>([{ id: 1, kind: "URL", text: "CLIQUE AQUI", url: "https://movyapi.com.br" }]);
-  const [mediaUrl, setMediaUrl] = useState(DEFAULT_HEADER_VIDEO);
+  const [mediaUrl, setMediaUrl] = useState(DEFAULT_HEADER_IMAGE);
   const [quantity, setQuantity] = useState(1);
   const [status, setStatus] = useState("");
   const [query, setQuery] = useState("");
