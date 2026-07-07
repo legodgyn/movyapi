@@ -55,8 +55,12 @@ const titles: Record<string, { title: string; description: string }> = {
     description: "Gerencie seus contatos e tags",
   },
   "/flows": {
-    title: "Fluxos",
-    description: "Automacoes de mensagens",
+    title: "Flow META",
+    description: "Automacoes pela Cloud API",
+  },
+  "/flows-infobip": {
+    title: "Flow Infobip",
+    description: "Automacoes pelo canal Infobip",
   },
   "/media": {
     title: "Gerenciador de Midias",

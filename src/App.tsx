@@ -50,7 +50,8 @@ export function App() {
         <Route path="/broadcast-random" element={<Broadcast mode="random" />} />
         <Route path="/conversations" element={<Conversations />} />
         <Route path="/contatos" element={<Contacts />} />
-        <Route path="/flows" element={<Flows />} />
+        <Route path="/flows" element={<Flows provider="meta" />} />
+        <Route path="/flows-infobip" element={<Flows provider="infobip" />} />
         <Route path="/media" element={<Media />} />
         <Route path="/transmission-analytics" element={<Analytics />} />
         <Route path="/admin/users" element={<AdminUsers />} />

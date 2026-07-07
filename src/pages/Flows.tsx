@@ -185,13 +185,43 @@ type SavedFlowSummary = {
   };
 };
 
+type FlowProviderKind = "meta" | "infobip";
+
+type FlowsProps = {
+  provider?: FlowProviderKind;
+};
+
+type FlowStorageKeys = {
+  editor: string;
+  list: string;
+  run: string;
+};
+
+type FlowPageCopy = {
+  title: string;
+  subtitle: string;
+  editorStatus: string;
+  senderHint: string;
+  emptyTemplateText: string;
+  acceptedLabel: string;
+  acceptedStep: string;
+  acceptedEvent: string;
+  sentStatus: string;
+  statusWaiting: string;
+};
+
 const LOCAL_FLOW_EDITOR_KEY = "scaleapi.flowEditor";
 const LOCAL_FLOW_LIST_KEY = "scaleapi.flowList";
 const LOCAL_FLOW_RUN_KEY = "scaleapi.flowRun";
+const LOCAL_INFOBIP_FLOW_EDITOR_KEY = "scaleapi.infobipFlowEditor";
+const LOCAL_INFOBIP_FLOW_LIST_KEY = "scaleapi.infobipFlowList";
+const LOCAL_INFOBIP_FLOW_RUN_KEY = "scaleapi.infobipFlowRun";
 const LOCAL_BM_SETTINGS_KEY = "scaleapi.bmSettings";
 const LOCAL_BM_ACCOUNTS_KEY = "scaleapi.bmAccounts";
 const LOCAL_CONNECTED_SENDERS_KEY = "movy.connectedSenders";
 const LOCAL_META_SENT_TEMPLATES_KEY = "scaleapi.metaSentTemplatesCache";
+const LOCAL_INFOBIP_SENT_TEMPLATES_KEY = "movy.infobipSentTemplates";
+const LOCAL_INFOBIP_SENDERS_KEY = "movy.infobipSenders";
 const MEDIA_LIBRARY_KEY = "movy.mediaLibrary";
 const GRAPH_API_BASE = "https://graph.facebook.com/v24.0";
 
@@ -238,6 +268,50 @@ const defaultRun: FlowRun = {
   messageIds: [],
   statusByMessageId: {},
 };
+
+function flowStorageKeys(provider: FlowProviderKind): FlowStorageKeys {
+  if (provider === "infobip") {
+    return {
+      editor: LOCAL_INFOBIP_FLOW_EDITOR_KEY,
+      list: LOCAL_INFOBIP_FLOW_LIST_KEY,
+      run: LOCAL_INFOBIP_FLOW_RUN_KEY,
+    };
+  }
+  return {
+    editor: LOCAL_FLOW_EDITOR_KEY,
+    list: LOCAL_FLOW_LIST_KEY,
+    run: LOCAL_FLOW_RUN_KEY,
+  };
+}
+
+function flowPageCopy(provider: FlowProviderKind): FlowPageCopy {
+  if (provider === "infobip") {
+    return {
+      title: "Flow Infobip",
+      subtitle: "Crie jornadas com remetentes e templates do canal Infobip.",
+      editorStatus: "Flow Infobip pronto.",
+      senderHint: "Esse e o remetente integrado da Infobip que vai assinar o fluxo.",
+      emptyTemplateText: "Nenhum template Infobip encontrado para esse remetente",
+      acceptedLabel: "Aceitos Infobip",
+      acceptedStep: "Aceito pela Infobip, aguardando status",
+      acceptedEvent: "mensagem(ns) aceita(s) pela Infobip.",
+      sentStatus: "Fluxo enviado pela Infobip. Acompanhe entrega/falha pelo webhook/status.",
+      statusWaiting: "Aguardando webhook/status da Infobip",
+    };
+  }
+  return {
+    title: "Flow META",
+    subtitle: "Crie jornadas com remetente, template inicial e respostas automaticas por botoes.",
+    editorStatus: "Flow META pronto.",
+    senderHint: "Esse e o numero oficial da Cloud API que vai assinar o fluxo.",
+    emptyTemplateText: "Nenhum template aprovado nessa BM",
+    acceptedLabel: "Aceitos Meta",
+    acceptedStep: "Aceito pela Meta, aguardando webhook",
+    acceptedEvent: "mensagem(ns) aceita(s) pela Meta.",
+    sentStatus: "Fluxo enviado. Acompanhe entrega/falha pelo webhook da Cloud API.",
+    statusWaiting: "Aguardando webhook/status da Cloud API",
+  };
+}
 
 const fallbackTags: ContactTag[] = [
   { id: "tag-demo-1000", name: "0106 - teste", contacts_count: 1000 },
@@ -339,9 +413,9 @@ const initialNodes: Node<FlowNodeData>[] = [
 
 const initialEdges: Edge[] = [];
 
-function readStoredFlow() {
+function readStoredFlow(key = LOCAL_FLOW_EDITOR_KEY) {
   try {
-    const stored = JSON.parse(localStorage.getItem(LOCAL_FLOW_EDITOR_KEY) || "{}");
+    const stored = JSON.parse(localStorage.getItem(key) || "{}");
     if (Array.isArray(stored.nodes) && Array.isArray(stored.edges)) return stored;
   } catch {
     return null;
@@ -349,9 +423,9 @@ function readStoredFlow() {
   return null;
 }
 
-function readStoredRun(): FlowRun {
+function readStoredRun(key = LOCAL_FLOW_RUN_KEY): FlowRun {
   try {
-    const stored = JSON.parse(localStorage.getItem(LOCAL_FLOW_RUN_KEY) || "{}");
+    const stored = JSON.parse(localStorage.getItem(key) || "{}");
     return {
       ...defaultRun,
       ...stored,
@@ -364,17 +438,17 @@ function readStoredRun(): FlowRun {
   }
 }
 
-function readStoredFlowList(): SavedFlowSummary[] {
+function readStoredFlowList(key = LOCAL_FLOW_LIST_KEY): SavedFlowSummary[] {
   try {
-    const stored = JSON.parse(localStorage.getItem(LOCAL_FLOW_LIST_KEY) || "[]");
+    const stored = JSON.parse(localStorage.getItem(key) || "[]");
     return Array.isArray(stored) ? stored : [];
   } catch {
     return [];
   }
 }
 
-function writeStoredFlowList(flows: SavedFlowSummary[]) {
-  localStorage.setItem(LOCAL_FLOW_LIST_KEY, JSON.stringify(flows.slice(0, 80)));
+function writeStoredFlowList(flows: SavedFlowSummary[], key = LOCAL_FLOW_LIST_KEY) {
+  localStorage.setItem(key, JSON.stringify(flows.slice(0, 80)));
 }
 
 function formatFlowDate(value: string) {
@@ -624,6 +698,10 @@ function normalizePhoneSender(account: BmSettingsData, phone: NonNullable<BmSett
 }
 
 function senderDedupeKey(sender: InfobipApi) {
+  const provider = String(sender.provider || sender.api_type || sender.apiType || "").toLowerCase();
+  const apiId = String(sender.api_id || sender.apiId || "").trim();
+  const infobipSender = onlyDigits(sender.sender || sender.sender_number || sender.senderNumber || sender.phoneNumber || sender.phone);
+  if (provider.includes("infobip") || apiId) return `infobip:${apiId || sender.id}:${infobipSender || sender.id}`;
   const wabaId = String(sender.defaultWabaId || sender.wabaId || "").trim();
   const phoneNumberId = String(sender.defaultPhoneNumberId || sender.phoneNumberId || "").trim();
   const phone = onlyDigits(sender.phoneNumber || sender.sender_number || sender.senderNumber);
@@ -802,8 +880,12 @@ function isApprovedTemplate(template: SavedTemplate) {
 
 function templateDedupeKey(template: SavedTemplate) {
   const wabaId = String(template.waba_id || "").trim();
+  const apiId = String(template.api_id || template.apiId || "").trim();
+  const provider = String(template.provider || template.source || "").trim().toLowerCase();
+  const sender = onlyDigits(template.sender_number || template.senderNumber || template.sender);
   const name = String(template.name || "").trim().toLowerCase();
   const language = String(template.language || "").trim().toLowerCase();
+  if (provider.includes("infobip") || apiId) return `infobip:${apiId}:${sender}:${name}:${language}`;
   return wabaId ? `waba:${wabaId}:${name}:${language}` : `name:${name}:${language}`;
 }
 
@@ -829,6 +911,97 @@ function readCachedMetaTemplates() {
   } catch {
     return [];
   }
+}
+
+function isInfobipTemplate(template: SavedTemplate) {
+  const folder = String(template.folder || "").toLowerCase();
+  const provider = String(template.provider || template.source || "").toLowerCase();
+  return folder.includes("infobip") || provider.includes("infobip") || Boolean(template.api_id || template.apiId || template.infobip_status);
+}
+
+function readLocalInfobipTemplates() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LOCAL_INFOBIP_SENT_TEMPLATES_KEY) || "[]") as SavedTemplate[];
+    return Array.isArray(stored) ? stored.filter(isInfobipTemplate) : [];
+  } catch {
+    return [];
+  }
+}
+
+function readIntegratedInfobipSenders() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LOCAL_INFOBIP_SENDERS_KEY) || "[]") as Array<Record<string, unknown>>;
+    return Array.isArray(stored) ? stored : [];
+  } catch {
+    return [];
+  }
+}
+
+function apiBaseUrl(api?: InfobipApi) {
+  return String(api?.base_url || api?.baseUrl || api?.url || "");
+}
+
+function apiToken(api?: InfobipApi) {
+  return String(api?.token || api?.api_key || api?.apiKey || api?.authorization || "");
+}
+
+function apiSender(api?: InfobipApi) {
+  return String(api?.sender_number || api?.senderNumber || api?.sender || api?.phone_number || "");
+}
+
+function apiLabel(api?: InfobipApi) {
+  return String(api?.name || api?.label || api?.apiName || api?.id || "Infobip");
+}
+
+function normalizeInfobipFlowSender(api: InfobipApi, sender?: Record<string, unknown>, index = 0): InfobipApi | null {
+  const senderNumberValue = String(
+    sender?.sender ||
+      sender?.senderNumber ||
+      sender?.sender_number ||
+      sender?.phoneNumber ||
+      sender?.phone ||
+      sender?.number ||
+      apiSender(api) ||
+      "",
+  ).trim();
+  if (!senderNumberValue) return null;
+  const senderName = String(sender?.name || sender?.displayName || sender?.verifiedName || api.sender_name || api.senderName || apiLabel(api));
+  const apiId = String(sender?.apiId || sender?.api_id || api.id || "");
+  return {
+    ...api,
+    id: String(sender?.id || `${apiId}:${senderNumberValue}:${index}`),
+    api_id: apiId,
+    apiId,
+    apiName: apiLabel(api),
+    provider: "infobip",
+    api_type: "infobip",
+    name: senderName,
+    label: senderName,
+    businessName: apiLabel(api),
+    base_url: apiBaseUrl(api),
+    baseUrl: apiBaseUrl(api),
+    token: apiToken(api),
+    api_key: apiToken(api),
+    sender: senderNumberValue,
+    sender_number: senderNumberValue,
+    senderNumber: senderNumberValue,
+    phoneNumber: senderNumberValue,
+    status: String(sender?.status || api.status || "connected"),
+  } as InfobipApi;
+}
+
+async function readInfobipFlowSenders() {
+  const apis = await infobipApis.normalizedList("whatsapp").catch(() => infobipApis.normalizedList().catch(() => [] as InfobipApi[]));
+  const byApiId = new Map(apis.map((api) => [String(api.id), api]));
+  const integrated = readIntegratedInfobipSenders()
+    .map((sender, index) => {
+      const apiId = String(sender.apiId || sender.api_id || "");
+      const api = byApiId.get(apiId) || (apis[0] as InfobipApi | undefined);
+      return api ? normalizeInfobipFlowSender(api, sender, index) : null;
+    })
+    .filter(Boolean) as InfobipApi[];
+  const manual = apis.map((api, index) => normalizeInfobipFlowSender(api, undefined, index)).filter(Boolean) as InfobipApi[];
+  return dedupeSenders(integrated.length ? integrated : manual);
 }
 
 async function fetchApprovedMetaTemplatesFromBmAccounts(extraAccounts: BmSettingsData[] = []) {
@@ -886,6 +1059,7 @@ function senderNumber(sender: InfobipApi) {
     sender.phone_number,
     sender.phone,
     sender.number,
+    sender.sender,
     sender.sender_number,
     sender.senderNumber,
   ];
@@ -902,6 +1076,16 @@ function senderBusinessLabel(sender: InfobipApi) {
 
 function templateMatchesSender(template: SavedTemplate, sender?: InfobipApi) {
   if (!sender) return true;
+  const provider = String(sender.provider || sender.api_type || sender.apiType || "").toLowerCase();
+  if (provider.includes("infobip")) {
+    const templateApi = String(template.api_id || template.apiId || "").trim();
+    const senderApi = String(sender.api_id || sender.apiId || "").trim();
+    const templateSender = onlyDigits(template.sender_number || template.senderNumber || template.sender || template.from);
+    const currentSender = onlyDigits(sender.sender || sender.sender_number || sender.senderNumber || sender.phoneNumber || sender.phone);
+    if (templateApi && senderApi && templateApi !== senderApi) return false;
+    if (templateSender && currentSender && templateSender !== currentSender) return false;
+    return isInfobipTemplate(template);
+  }
   const templateWaba = String(template.waba_id || "").trim();
   const senderWaba = String(sender.defaultWabaId || sender.wabaId || "").trim();
   if (!templateWaba || !senderWaba) return true;
@@ -1228,8 +1412,11 @@ function FlowCardNode({ data, selected }: NodeProps<FlowNodeData>) {
 
 const nodeTypes = { flowCard: FlowCardNode };
 
-export function Flows() {
-  const stored = readStoredFlow();
+export function Flows({ provider = "meta" }: FlowsProps) {
+  const storageKeys = useMemo(() => flowStorageKeys(provider), [provider]);
+  const copy = useMemo(() => flowPageCopy(provider), [provider]);
+  const isInfobipFlow = provider === "infobip";
+  const stored = useMemo(() => readStoredFlow(storageKeys.editor), [storageKeys.editor]);
   const [nodes, setNodes, baseOnNodesChange] = useNodesState<FlowNodeData>(stored?.nodes || initialNodes);
   const [edges, setEdges, baseOnEdgesChange] = useEdgesState(stored?.edges || initialEdges);
   const [flowName, setFlowName] = useState(stored?.name || "teste");
@@ -1245,14 +1432,14 @@ export function Flows() {
   } | null>(null);
   const [pendingConnection, setPendingConnection] = useState<{ source?: string; sourceHandle?: string } | null>(null);
   const [tags, setTags] = useState<ContactTag[]>(() => readLocalContactTags());
-  const [flowRun, setFlowRun] = useState<FlowRun>(() => readStoredRun());
+  const [flowRun, setFlowRun] = useState<FlowRun>(() => readStoredRun(storageKeys.run));
   const [jsonOpen, setJsonOpen] = useState(false);
-  const [status, setStatus] = useState("Flow editor pronto.");
+  const [status, setStatus] = useState(copy.editorStatus);
   const [flowDirty, setFlowDirty] = useState(false);
   const [savedFlowAt, setSavedFlowAt] = useState(stored?.updatedAt || "");
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [flowView, setFlowView] = useState<"dashboard" | "editor">("dashboard");
-  const [flowList, setFlowList] = useState<SavedFlowSummary[]>(() => readStoredFlowList());
+  const [flowList, setFlowList] = useState<SavedFlowSummary[]>(() => readStoredFlowList(storageKeys.list));
   const [flowSearch, setFlowSearch] = useState("");
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createForm, setCreateForm] = useState({ name: "", senderId: "", templateId: "" });
@@ -1364,15 +1551,35 @@ export function Flows() {
   );
 
   useEffect(() => {
-    infobipApis
-      .normalizedList()
-      .then((items) => setSenders(dedupeSenders([...readBmSenders(), ...items])))
-      .catch(() => setSenders(readBmSenders()));
-  }, []);
+    let active = true;
+    if (isInfobipFlow) {
+      readInfobipFlowSenders()
+        .then((items) => {
+          if (active) setSenders(items);
+        })
+        .catch(() => {
+          if (active) setSenders([]);
+        });
+    } else {
+      setSenders(readBmSenders());
+    }
+    return () => {
+      active = false;
+    };
+  }, [isInfobipFlow]);
 
   useEffect(() => {
     let active = true;
     async function loadTemplates() {
+      if (isInfobipFlow) {
+        const savedInfobipTemplates = await savedTemplates.normalizedList().catch(() => [] as SavedTemplate[]);
+        const nextTemplates = dedupeTemplates([
+          ...readLocalInfobipTemplates(),
+          ...savedInfobipTemplates.filter(isInfobipTemplate),
+        ]);
+        if (active) setTemplates(nextTemplates);
+        return;
+      }
       const senderAccounts = senders.map(senderToBmAccount).filter((account) => account.accessToken && (account.defaultWabaId || account.wabaId));
       const [directMetaTemplates, savedMetaTemplates, backendTemplates] = await Promise.all([
         fetchApprovedMetaTemplatesFromBmAccounts(senderAccounts).catch(() => [] as SavedTemplate[]),
@@ -1392,7 +1599,7 @@ export function Flows() {
     return () => {
       active = false;
     };
-  }, [senders]);
+  }, [isInfobipFlow, senders]);
 
   useEffect(() => {
     setTags(readLocalContactTags());
@@ -1415,8 +1622,8 @@ export function Flows() {
       ...current,
       senderId: current.senderId || senders[0]?.id || "",
       templateId: (() => {
-        const sender = senders.find((item) => item.id === (current.senderId || senders[0]?.id || ""));
-        const options = templates.filter((template) => templateMatchesSender(template, sender));
+          const sender = senders.find((item) => item.id === (current.senderId || senders[0]?.id || ""));
+          const options = templates.filter((template) => templateMatchesSender(template, sender));
         return options.some((template) => template.id === current.templateId) ? current.templateId : options[0]?.id || "";
       })(),
     }));
@@ -1462,10 +1669,10 @@ export function Flows() {
             waiting,
             statusByMessageId,
             status: done ? "done" : current.status,
-            currentStep: done ? "Fluxo finalizado" : hasRunningSession ? "Aguardando resposta ou proximo no" : "Aguardando webhook/status da Cloud API",
+            currentStep: done ? "Fluxo finalizado" : hasRunningSession ? "Aguardando resposta ou proximo no" : copy.statusWaiting,
             events: Array.from(new Set([...runtimeEvents, ...current.events])).slice(0, 12),
           };
-          localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify(next));
+          localStorage.setItem(storageKeys.run, JSON.stringify(next));
           syncCurrentFlowSummary(next);
           return next;
         });
@@ -1474,7 +1681,7 @@ export function Flows() {
       }
     }, 3500);
     return () => window.clearInterval(timer);
-  }, [currentFlowId, flowRun.messageIds, flowRun.status]);
+  }, [copy.statusWaiting, currentFlowId, flowRun.messageIds, flowRun.status, storageKeys.run]);
 
 
   function rebuildButtonBranches(buttons: string[]) {
@@ -1521,7 +1728,7 @@ export function Flows() {
     markFlowDirty();
     const template = templates.find((item) => item.id === templateId);
     if (!template) {
-      setStatus("Template aprovado nao encontrado para esse remetente.");
+      setStatus("Template inicial nao encontrado para esse remetente.");
       return;
     }
     const currentStart = nodes.find((node) => node.id === "start");
@@ -1704,7 +1911,7 @@ export function Flows() {
     const sender = senders.find((item) => item.id === flowRun.senderId);
     const template = templates.find((item) => item.id === startNode?.data.templateId);
     const payload = { id, name: flowName, nodes, edges, selectedNodeId, updatedAt };
-    localStorage.setItem(LOCAL_FLOW_EDITOR_KEY, JSON.stringify(payload));
+    localStorage.setItem(storageKeys.editor, JSON.stringify(payload));
     setCurrentFlowId(id);
     setSavedFlowAt(updatedAt);
     setFlowDirty(false);
@@ -1730,7 +1937,7 @@ export function Flows() {
     };
     setFlowList((current) => {
       const next = [summary, ...current.filter((item) => item.id !== id)];
-      writeStoredFlowList(next);
+      writeStoredFlowList(next, storageKeys.list);
       return next;
     });
     setStatus("Fluxo salvo localmente.");
@@ -1755,7 +1962,7 @@ export function Flows() {
               }
             : item,
         );
-        writeStoredFlowList(next);
+        writeStoredFlowList(next, storageKeys.list);
         return next;
       });
     }
@@ -1763,7 +1970,7 @@ export function Flows() {
 
   function updateRun(nextRun: FlowRun) {
     setFlowRun(nextRun);
-    localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify(nextRun));
+    localStorage.setItem(storageKeys.run, JSON.stringify(nextRun));
     syncCurrentFlowSummary(nextRun);
   }
 
@@ -1790,7 +1997,7 @@ export function Flows() {
         : {}),
     });
     localStorage.setItem(
-      LOCAL_FLOW_EDITOR_KEY,
+      storageKeys.editor,
       JSON.stringify({ id: flow.id, name: flow.name, nodes: flow.nodes, edges: flow.edges, selectedNodeId: flow.selectedNodeId, updatedAt: flow.updatedAt }),
     );
     setFlowView("editor");
@@ -1835,7 +2042,7 @@ export function Flows() {
     setSavedFlowAt("");
     setFlowDirty(true);
     setFlowRun({ ...defaultRun, senderId: sender.id });
-    localStorage.setItem(LOCAL_FLOW_RUN_KEY, JSON.stringify({ ...defaultRun, senderId: sender.id }));
+    localStorage.setItem(storageKeys.run, JSON.stringify({ ...defaultRun, senderId: sender.id }));
     setCreateModalOpen(false);
     setFlowView("editor");
     setStatus("Fluxo criado. Ajuste as variaveis do template e salve para liberar o disparo.");
@@ -1844,7 +2051,7 @@ export function Flows() {
   function deleteFlow(flowId: string) {
     setFlowList((current) => {
       const next = current.filter((item) => item.id !== flowId);
-      writeStoredFlowList(next);
+      writeStoredFlowList(next, storageKeys.list);
       return next;
     });
     if (flowId === currentFlowId) {
@@ -1871,10 +2078,25 @@ export function Flows() {
       return;
     }
 
-    const account = findAccountForSender(sender);
-    const phoneNumberId = String(sender.phoneNumberId || sender.defaultPhoneNumberId || account?.phoneNumberId || account?.defaultPhoneNumberId || "").trim();
-    const accessToken = String(sender.accessToken || sender.token || account?.accessToken || "").trim();
-    if (!phoneNumberId || !accessToken) {
+    const account = isInfobipFlow ? null : findAccountForSender(sender);
+    const phoneNumberId = isInfobipFlow
+      ? ""
+      : String(sender.phoneNumberId || sender.defaultPhoneNumberId || account?.phoneNumberId || account?.defaultPhoneNumberId || "").trim();
+    const accessToken = String(
+      isInfobipFlow
+        ? sender.token || sender.api_key || sender.apiKey || sender.authorization || ""
+        : sender.accessToken || sender.token || account?.accessToken || "",
+    ).trim();
+    const infobipApiId = String(sender.api_id || sender.apiId || sender.id || "").trim();
+    const infobipBaseUrl = String(sender.base_url || sender.baseUrl || sender.url || "").trim();
+    const outboundSenderNumber = isInfobipFlow
+      ? senderNumber(sender) || onlyDigits(sender.sender || sender.sender_number || sender.senderNumber || sender.phoneNumber || sender.phone)
+      : senderNumber(sender);
+    if (isInfobipFlow && (!infobipApiId || !infobipBaseUrl || !accessToken || !outboundSenderNumber)) {
+      setStatus("Remetente Infobip sem Base URL, token ou numero. Confira Gerenciar APIs e remetentes sincronizados.");
+      return;
+    }
+    if (!isInfobipFlow && (!phoneNumberId || !accessToken)) {
       setStatus("Remetente sem Phone Number ID ou token. Confira Configuracoes BM e Registrar Remetente.");
       return;
     }
@@ -1936,7 +2158,8 @@ export function Flows() {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       status: "created",
-      channel: "whatsapp_cloud_flow",
+      channel: isInfobipFlow ? "infobip_flow" : "whatsapp_cloud_flow",
+      provider: isInfobipFlow ? "infobip" : "meta",
       mode: "flow",
       flow: {
         name: flowName,
@@ -1950,9 +2173,16 @@ export function Flows() {
         bmName: senderBusinessLabel(sender),
         wabaId: sender.defaultWabaId || sender.wabaId || "",
         phoneNumberId,
-        phoneNumber: senderNumber(sender),
+        phoneNumber: outboundSenderNumber,
         accessToken,
-        apiType: sender.api_type || "whatsapp_cloud",
+        token: isInfobipFlow ? accessToken : undefined,
+        apiId: isInfobipFlow ? infobipApiId : undefined,
+        api_id: isInfobipFlow ? infobipApiId : undefined,
+        baseUrl: isInfobipFlow ? infobipBaseUrl : undefined,
+        base_url: isInfobipFlow ? infobipBaseUrl : undefined,
+        senderNumber: outboundSenderNumber,
+        apiType: isInfobipFlow ? "infobip" : sender.api_type || "whatsapp_cloud",
+        provider: isInfobipFlow ? "infobip" : "meta",
       },
       totals: {
         contacts: total,
@@ -1971,9 +2201,16 @@ export function Flows() {
             bmName: senderBusinessLabel(sender),
             wabaId: sender.defaultWabaId || sender.wabaId || "",
             phoneNumberId,
-            phoneNumber: senderNumber(sender),
+            phoneNumber: outboundSenderNumber,
             accessToken,
-            apiType: sender.api_type || "whatsapp_cloud",
+            token: isInfobipFlow ? accessToken : undefined,
+            apiId: isInfobipFlow ? infobipApiId : undefined,
+            api_id: isInfobipFlow ? infobipApiId : undefined,
+            baseUrl: isInfobipFlow ? infobipBaseUrl : undefined,
+            base_url: isInfobipFlow ? infobipBaseUrl : undefined,
+            senderNumber: outboundSenderNumber,
+            apiType: isInfobipFlow ? "infobip" : sender.api_type || "whatsapp_cloud",
+            provider: isInfobipFlow ? "infobip" : "meta",
           },
           template: {
             id: template.id,
@@ -1986,6 +2223,11 @@ export function Flows() {
             media_type: template.media_type || "",
             header_type: template.header_type || "",
             wabaId: template.waba_id || sender.defaultWabaId || sender.wabaId || "",
+            provider: isInfobipFlow ? "infobip" : "meta",
+            apiId: isInfobipFlow ? infobipApiId : template.apiId || template.api_id,
+            api_id: isInfobipFlow ? infobipApiId : template.api_id,
+            senderNumber: isInfobipFlow ? outboundSenderNumber : template.senderNumber || template.sender_number,
+            sender_number: isInfobipFlow ? outboundSenderNumber : template.sender_number,
             variables,
             media: mediaUrl
               ? {
@@ -2019,13 +2261,21 @@ export function Flows() {
         tagId: recipient.tagId,
         tagName: recipient.tagName,
         lotId,
-        senderId: sender.id,
-        senderName: senderLabel(sender),
-        phoneNumberId,
-        accessToken,
-        templateId: template.id,
-        templateName: template.name,
-        variables,
+            senderId: sender.id,
+            senderName: senderLabel(sender),
+            phoneNumberId,
+            accessToken,
+            token: isInfobipFlow ? accessToken : undefined,
+            apiId: isInfobipFlow ? infobipApiId : undefined,
+            api_id: isInfobipFlow ? infobipApiId : undefined,
+            baseUrl: isInfobipFlow ? infobipBaseUrl : undefined,
+            base_url: isInfobipFlow ? infobipBaseUrl : undefined,
+            senderNumber: outboundSenderNumber,
+            senderPhone: outboundSenderNumber,
+            provider: isInfobipFlow ? "infobip" : "meta",
+            templateId: template.id,
+            templateName: template.name,
+            variables,
         mediaUrl,
       })),
     };
@@ -2047,7 +2297,7 @@ export function Flows() {
     });
 
     try {
-      const response = await dispatchThroughSystem(payload, { phoneNumberId, accessToken });
+      const response = await dispatchThroughSystem(payload, isInfobipFlow ? undefined : { phoneNumberId, accessToken });
       const responseRecord = asRecord(response);
       const messageIds = backendMessageIds(response);
       const accepted = numberFromResponse(responseRecord, ["accepted", "accepted_count", "sent", "sent_count", "queued", "queued_count"], messageIds.length);
@@ -2062,9 +2312,9 @@ export function Flows() {
         delivered: 0,
         failed,
         waiting,
-        currentStep: failed && !accepted ? "Falha no envio inicial" : "Aceito pela Meta, aguardando webhook",
+        currentStep: failed && !accepted ? "Falha no envio inicial" : copy.acceptedStep,
         events: [
-          `${nowTime()} - ${accepted.toLocaleString("pt-BR")} mensagem(ns) aceita(s) pela Meta.`,
+          `${nowTime()} - ${accepted.toLocaleString("pt-BR")} ${copy.acceptedEvent}`,
           ...responseEvents(response),
         ].slice(0, 12),
         messageIds,
@@ -2075,7 +2325,7 @@ export function Flows() {
       setStatus(
         failed
           ? "O fluxo retornou falhas imediatas. Veja os detalhes no historico do disparo."
-          : "Fluxo enviado. Acompanhe entrega/falha pelo webhook da Cloud API.",
+          : copy.sentStatus,
       );
     } catch (error) {
       const message = formatBackendError(error);
@@ -2116,11 +2366,11 @@ export function Flows() {
         <section className="broadcast-dashboard">
           <div className="broadcast-dashboard-head">
             <div>
-              <h1>Flows</h1>
-              <p>Crie jornadas com remetente, template inicial e respostas automaticas por botoes.</p>
+              <h1>{copy.title}</h1>
+              <p>{copy.subtitle}</p>
             </div>
             <div className="broadcast-dashboard-actions">
-              <button className="button secondary" onClick={() => setFlowList(readStoredFlowList())} type="button">
+              <button className="button secondary" onClick={() => setFlowList(readStoredFlowList(storageKeys.list))} type="button">
                 <RefreshCcw size={16} />
                 Atualizar
               </button>
@@ -2239,7 +2489,7 @@ export function Flows() {
                       {template.name}
                     </option>
                   ))}
-                  {!createTemplateOptions.length ? <option value="" disabled>Nenhum template aprovado nessa BM</option> : null}
+                  {!createTemplateOptions.length ? <option value="" disabled>{copy.emptyTemplateText}</option> : null}
                 </select>
               </label>
               <div className="flow-create-hint">
@@ -2378,7 +2628,7 @@ export function Flows() {
                           {template.name}
                         </option>
                       ))}
-                      {!currentSenderTemplates.length ? <option value="" disabled>Nenhum template aprovado nessa BM</option> : null}
+                      {!currentSenderTemplates.length ? <option value="" disabled>{copy.emptyTemplateText}</option> : null}
                     </select>
                   </label>
                   {(selectedNode.data.variables || []).length ? (
@@ -2721,7 +2971,7 @@ export function Flows() {
 
             <div className="dc-run-grid">
               <div>
-                <span>Aceitos Meta</span>
+                <span>{copy.acceptedLabel}</span>
                 <strong>{flowRun.sent.toLocaleString("pt-BR")}</strong>
               </div>
               <div>

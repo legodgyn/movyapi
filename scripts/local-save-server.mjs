@@ -1827,6 +1827,191 @@ async function sendCloudMessage(phoneNumberId, token, messagePayload) {
   return { data, messageId };
 }
 
+function isInfobipPayload(payload) {
+  const sender = asRecord(payload.sender);
+  const source = [
+    payload.provider,
+    payload.channel,
+    payload.apiType,
+    sender.provider,
+    sender.apiType,
+    sender.api_type,
+  ].join(" ").toLowerCase();
+  return source.includes("infobip");
+}
+
+function infobipApiFromSources(...sources) {
+  const records = sources.map(asRecord);
+  const fromRecords = (...keys) => firstNonEmpty(...records.flatMap((record) => keys.map((key) => record[key])));
+  const senderNumber = onlyDigits(
+    fromRecords("senderNumber", "sender_number", "senderPhone", "sender_phone", "phoneNumber", "phone_number", "phone", "sender", "from", "number"),
+  );
+  return {
+    id: fromRecords("apiId", "api_id", "id"),
+    name: fromRecords("apiName", "api_name", "label", "name") || "Infobip",
+    base_url: normalizeInfobipBaseUrl(fromRecords("baseUrl", "base_url", "url", "base")),
+    token: normalizeInfobipToken(fromRecords("token", "apiKey", "api_key", "authorization", "accessToken")),
+    sender_number: senderNumber,
+  };
+}
+
+function extractInfobipMessageId(data) {
+  const record = asRecord(data);
+  const messages = Array.isArray(record.messages) ? record.messages : [];
+  const first = asRecord(messages[0]);
+  return firstNonEmpty(first.messageId, first.message_id, first.id, record.messageId, record.message_id, record.id, record.bulkId);
+}
+
+function infobipTemplateMedia(template) {
+  const media = asRecord(template.media);
+  const components = Array.isArray(template.components) ? template.components : [];
+  const header = components.find((item) => String(item?.type || "").toUpperCase() === "HEADER");
+  const type = String(
+    firstNonEmpty(
+      template.mediaType,
+      template.media_type,
+      template.headerType,
+      template.header_type,
+      media.type,
+      header?.format,
+    ),
+  ).toUpperCase();
+  const url = firstNonEmpty(
+    template.mediaUrl,
+    template.media_url,
+    template.headerUrl,
+    template.header_url,
+    template.exampleUrl,
+    template.example_url,
+    media.url,
+    media.link,
+    header?.example,
+  );
+  const format = type.includes("VIDEO") ? "VIDEO" : type.includes("DOCUMENT") ? "DOCUMENT" : type.includes("IMAGE") ? "IMAGE" : "";
+  return format && url ? { type: format, mediaUrl: url } : null;
+}
+
+function buildInfobipTemplateMessagePayload(recipient, lot, api) {
+  const template = asRecord(lot.template);
+  const variables = asRecord(recipient.variables || template.variables);
+  const phone = normalizeBrazilPhone(recipient.phone || recipient.telefone || recipient.whatsapp);
+  const bodyVariables = extractVariablesFromText(templateBodyText(template));
+  const placeholders = bodyVariables.map((variable) => variableValue(variables, variable));
+  const templateData = {};
+  if (placeholders.length) templateData.body = { placeholders };
+  const media = infobipTemplateMedia(template);
+  if (media) {
+    templateData.header = {
+      type: media.type,
+      mediaUrl: media.mediaUrl,
+    };
+  }
+  const content = {
+    templateName: String(recipient.templateName || template.name || ""),
+    language: normalizeInfobipLanguage(template.language || recipient.language || "pt_BR"),
+    ...(Object.keys(templateData).length ? { templateData } : {}),
+  };
+  return {
+    messages: [
+      {
+        from: api.sender_number,
+        to: phone,
+        content,
+      },
+    ],
+    _debug: {
+      templateName: content.templateName,
+      language: content.language,
+      bodyVariables,
+      componentCount: Object.keys(templateData).length,
+    },
+  };
+}
+
+async function sendInfobipTemplateMessage(api, messagePayload) {
+  const cleanPayload = { ...messagePayload };
+  delete cleanPayload._debug;
+  const data = await fetchInfobipJson(api, "/whatsapp/1/message/template", {
+    method: "POST",
+    body: cleanPayload,
+    timeoutMs: 30000,
+  });
+  const messageId = extractInfobipMessageId(data);
+  if (!messageId) {
+    throw new Error(`Infobip nao retornou ID da mensagem. Resposta: ${JSON.stringify(data).slice(0, 500)}`);
+  }
+  return { data, messageId };
+}
+
+function infobipMessageBody(from, to, content, extra = {}) {
+  return {
+    messages: [
+      {
+        from,
+        to,
+        content,
+        ...extra,
+      },
+    ],
+  };
+}
+
+function buildInfobipFlowNodeRequest(node, session) {
+  const data = flowNodeData(node);
+  const kind = String(data.kind || "text");
+  const body = outgoingText(data.body || data.subtitle || data.title || "", session);
+  const mediaLink = String(data.imageUrl || data.mediaUrl || data.url || "").trim();
+  const caption = outgoingText(data.caption || body, session);
+  const from = session.senderNumber || session.phoneNumberId || asRecord(session.sender).phone || "";
+  const to = session.phone;
+
+  if (kind === "image" && mediaLink) {
+    return {
+      path: "/whatsapp/1/message/image",
+      body: infobipMessageBody(from, to, { mediaUrl: mediaLink, ...(caption ? { caption } : {}) }),
+    };
+  }
+
+  if (kind === "video" && mediaLink) {
+    return {
+      path: "/whatsapp/1/message/video",
+      body: infobipMessageBody(from, to, { mediaUrl: mediaLink, ...(caption ? { caption } : {}) }),
+    };
+  }
+
+  if (kind === "audio" && mediaLink) {
+    return {
+      path: "/whatsapp/1/message/audio",
+      body: infobipMessageBody(from, to, { mediaUrl: mediaLink }),
+    };
+  }
+
+  const buttons = kind === "interactive" ? (Array.isArray(data.buttons) ? data.buttons : ["CLIQUE AQUI"]).slice(0, 3) : [];
+  const buttonText = buttons.length ? `\n\n${buttons.map((button, index) => `${index + 1}. ${button}`).join("\n")}` : "";
+  return {
+    path: "/whatsapp/1/message/text",
+    body: infobipMessageBody(from, to, { text: `${body || String(data.title || "Mensagem")}${buttonText}` }),
+  };
+}
+
+async function sendInfobipFlowNodeMessage(node, session) {
+  const api = infobipApiFromSources(session.infobipApi, session.sender, session);
+  if (!api.base_url || !api.token || !api.sender_number) {
+    throw new Error("Sessao Infobip sem Base URL, token ou remetente.");
+  }
+  const request = buildInfobipFlowNodeRequest(node, { ...session, senderNumber: api.sender_number });
+  const data = await fetchInfobipJson(api, request.path, {
+    method: "POST",
+    body: request.body,
+    timeoutMs: 30000,
+  });
+  const messageId = extractInfobipMessageId(data);
+  if (!messageId) {
+    throw new Error(`Infobip nao retornou ID da mensagem. Resposta: ${JSON.stringify(data).slice(0, 500)}`);
+  }
+  return { data, messageId };
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -2042,8 +2227,11 @@ async function advanceFlowSession(runtime, session, nextNodeId, reason = "", dep
   }
 
   try {
-    const payload = buildFlowNodePayload(node, session);
-    const result = await sendCloudMessage(session.phoneNumberId, session.accessToken, payload);
+    const isInfobipSession = String(session.provider || "").toLowerCase().includes("infobip");
+    const payload = isInfobipSession ? null : buildFlowNodePayload(node, session);
+    const result = isInfobipSession
+      ? await sendInfobipFlowNodeMessage(node, session)
+      : await sendCloudMessage(session.phoneNumberId, session.accessToken, payload);
     session.currentMessageId = result.messageId;
     session.outboundMessageIds = Array.from(new Set([...(session.outboundMessageIds || []), result.messageId]));
     runtime.outboundIndex[result.messageId] = session.id;
@@ -2056,13 +2244,13 @@ async function advanceFlowSession(runtime, session, nextNodeId, reason = "", dep
         campaignId: session.flowId || "",
         campaignName: session.flowName || "Fluxo",
         mode: "flow",
-        channel: "whatsapp_cloud",
-        bm: firstNonEmpty(sessionSender.bmName, sessionSender.businessName, sessionSender.bm, "BM nao informada"),
+        channel: isInfobipSession ? "infobip_flow" : "whatsapp_cloud",
+        bm: firstNonEmpty(sessionSender.bmName, sessionSender.businessName, sessionSender.bm, isInfobipSession ? "Infobip" : "BM nao informada"),
         wabaId: firstNonEmpty(sessionSender.wabaId, sessionSender.waba_id),
         user: firstNonEmpty(session.user, "Admin"),
         sender: firstNonEmpty(sessionSender.name, sessionSender.verifiedName, session.flowName, "Fluxo"),
-        phone: firstNonEmpty(sessionSender.phone, sessionSender.phoneNumber, session.phoneNumberId),
-        phoneNumberId: session.phoneNumberId || "",
+        phone: firstNonEmpty(sessionSender.phone, sessionSender.phoneNumber, session.senderNumber, session.phoneNumberId),
+        phoneNumberId: isInfobipSession ? firstNonEmpty(session.senderNumber, session.phoneNumberId) : session.phoneNumberId || "",
         recipient: session.phone,
         templateId: "",
         templateName: String(data.title || kind),
@@ -2080,7 +2268,7 @@ async function advanceFlowSession(runtime, session, nextNodeId, reason = "", dep
         errorMessage: "",
       },
     ]);
-    runtime.events.push(flowEvent(session, `${String(data.title || kind)} enviado para ${session.phone}.`, "sent"));
+    runtime.events.push(flowEvent(session, `${String(data.title || kind)} enviado pela ${isInfobipSession ? "Infobip" : "Meta"} para ${session.phone}.`, "sent"));
   } catch (error) {
     session.status = "failed";
     runtime.events.push(flowEvent(session, `Falha ao enviar ${String(data.title || kind)}: ${error instanceof Error ? error.message : "erro desconhecido"}`, "failed"));
@@ -2112,6 +2300,13 @@ async function registerFlowSession(payload, recipient, lot, messageId) {
   const lotSender = asRecord(asRecord(lot).sender);
   const payloadSender = asRecord(payload.sender);
   const sessionSender = Object.keys(lotSender).length ? lotSender : payloadSender;
+  const provider = isInfobipPayload(payload) || String(recipient.provider || lotSender.provider || sessionSender.provider || "").toLowerCase().includes("infobip")
+    ? "infobip"
+    : "meta";
+  const infobipApi = provider === "infobip" ? infobipApiFromSources(recipient, lotSender, payloadSender, sessionSender) : null;
+  const senderNumber = provider === "infobip"
+    ? infobipApi?.sender_number
+    : firstNonEmpty(sessionSender.phoneNumber, sessionSender.phone, sessionSender.senderNumber, recipient.senderPhone);
   const session = {
     id: sessionId,
     broadcastId: String(payload.id || ""),
@@ -2128,14 +2323,26 @@ async function registerFlowSession(payload, recipient, lot, messageId) {
     currentNodeId: String(flow.startNodeId || "start"),
     currentMessageId: messageId,
     outboundMessageIds: [messageId],
-    accessToken: String(recipient.accessToken || lotSender.accessToken || asRecord(payload.sender).accessToken || ""),
-    phoneNumberId: String(recipient.phoneNumberId || lotSender.phoneNumberId || asRecord(payload.sender).phoneNumberId || ""),
+    provider,
+    infobipApi,
+    accessToken: String(
+      provider === "infobip"
+        ? infobipApi?.token || recipient.token || lotSender.token || payloadSender.token || ""
+        : recipient.accessToken || lotSender.accessToken || asRecord(payload.sender).accessToken || "",
+    ),
+    phoneNumberId: String(
+      provider === "infobip"
+        ? infobipApi?.sender_number || senderNumber || ""
+        : recipient.phoneNumberId || lotSender.phoneNumberId || asRecord(payload.sender).phoneNumberId || "",
+    ),
+    senderNumber: senderNumber || "",
     sender: {
-      bmName: firstNonEmpty(sessionSender.bmName, sessionSender.businessName, sessionSender.bm_name, sessionSender.name),
+      provider,
+      bmName: firstNonEmpty(sessionSender.bmName, sessionSender.businessName, sessionSender.bm_name, sessionSender.name, provider === "infobip" ? "Infobip" : ""),
       wabaId: firstNonEmpty(sessionSender.wabaId, sessionSender.waba_id),
       name: senderAnalyticsName(sessionSender, recipient.senderName),
-      phone: firstNonEmpty(sessionSender.phoneNumber, sessionSender.phone, sessionSender.senderNumber, recipient.senderPhone),
-      phoneNumberId: firstNonEmpty(recipient.phoneNumberId, sessionSender.phoneNumberId, payload.phoneNumberId),
+      phone: firstNonEmpty(senderNumber, sessionSender.phoneNumber, sessionSender.phone, sessionSender.senderNumber, recipient.senderPhone),
+      phoneNumberId: firstNonEmpty(provider === "infobip" ? senderNumber : "", recipient.phoneNumberId, sessionSender.phoneNumberId, payload.phoneNumberId),
     },
     user: firstNonEmpty(payload.createdBy, payload.user, payload.operator, "Admin"),
     status: "waiting_reply",
@@ -2147,7 +2354,7 @@ async function registerFlowSession(payload, recipient, lot, messageId) {
   runtime.sessions[sessionId] = session;
   runtime.outboundIndex[messageId] = sessionId;
   runtime.phoneIndex[phone] = sessionId;
-  runtime.events.push(flowEvent(session, `Template inicial aceito pela Meta. Aguardando resposta de ${phone}.`, "accepted"));
+  runtime.events.push(flowEvent(session, `Template inicial aceito pela ${provider === "infobip" ? "Infobip" : "Meta"}. Aguardando resposta de ${phone}.`, "accepted"));
   await writeFlowRuntime(runtime);
   return sessionId;
 }
@@ -2184,6 +2391,115 @@ function normalizeIncomingMessages(payload) {
     }
   }
   return messages.filter((message) => message.from || message.contextId);
+}
+
+function webhookTimestampSeconds(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return Math.floor(Date.now() / 1000);
+  if (/^\d+$/.test(raw)) {
+    const number = Number(raw);
+    return number > 9999999999 ? Math.floor(number / 1000) : number;
+  }
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : Math.floor(Date.now() / 1000);
+}
+
+function normalizeInfobipStatuses(payload) {
+  const record = asRecord(payload);
+  const items = [
+    ...(Array.isArray(record.results) ? record.results : []),
+    ...(Array.isArray(record.messages) ? record.messages : []),
+    ...(Array.isArray(record.data) ? record.data : []),
+  ];
+  if (!items.length && (record.messageId || record.message_id || record.id)) items.push(record);
+  return items
+    .map((item) => {
+      const source = asRecord(item);
+      const error = asRecord(Array.isArray(source.errors) ? source.errors[0] : source.error);
+      const statusGroup = asRecord(source.status);
+      const statusName = firstNonEmpty(statusGroup.name, statusGroup.groupName, source.status, source.messageStatus);
+      const statusValue = String(statusName || "").toLowerCase();
+      const failed = statusValue.includes("fail") || statusValue.includes("reject") || statusValue.includes("undeliver");
+      const delivered = statusValue.includes("deliver");
+      return {
+        id: firstNonEmpty(source.messageId, source.message_id, source.id),
+        status: failed ? "failed" : delivered ? "delivered" : statusValue.includes("read") ? "read" : statusValue || "accepted",
+        timestamp: webhookTimestampSeconds(firstNonEmpty(source.sentAt, source.doneAt, source.timestamp)),
+        recipientId: normalizeBrazilPhone(firstNonEmpty(source.to, source.recipient, source.destination, source.msisdn)),
+        conversationId: firstNonEmpty(source.conversationId, source.conversation_id),
+        errorCode: firstNonEmpty(error.id, error.code, source.errorCode),
+        errorTitle: firstNonEmpty(error.name, error.title, source.errorName),
+        errorMessage: firstNonEmpty(error.description, error.message, source.errorMessage),
+        raw: source,
+      };
+    })
+    .filter((status) => status.id);
+}
+
+function infobipInboundText(message) {
+  const record = asRecord(message);
+  const content = asRecord(record.content);
+  const text = asRecord(record.text);
+  const button = asRecord(record.button);
+  return firstNonEmpty(
+    content.text,
+    text.body,
+    text.text,
+    record.text,
+    button.text,
+    button.title,
+    asRecord(record.image).caption,
+    asRecord(record.video).caption,
+    String(record.type || "") ? `[${record.type}]` : "Mensagem recebida",
+  );
+}
+
+function normalizeInfobipIncomingMessages(payload) {
+  const record = asRecord(payload);
+  const items = [
+    ...(Array.isArray(record.results) ? record.results : []),
+    ...(Array.isArray(record.messages) ? record.messages : []),
+    ...(Array.isArray(record.data) ? record.data : []),
+  ];
+  if (!items.length && (record.from || record.messageId || record.id)) items.push(record);
+  return items
+    .map((item) => {
+      const source = asRecord(item);
+      const context = asRecord(source.context);
+      const callbackData = asRecord(source.callbackData);
+      const replyId = firstNonEmpty(asRecord(source.button).id, asRecord(source.button).payload, source.buttonId, source.replyId);
+      return {
+        id: firstNonEmpty(source.messageId, source.message_id, source.id, `infobip-in-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+        from: normalizeBrazilPhone(firstNonEmpty(source.from, source.sender, source.contact, source.msisdn)),
+        timestamp: webhookTimestampSeconds(firstNonEmpty(source.receivedAt, source.timestamp)),
+        contextId: firstNonEmpty(context.messageId, context.message_id, context.id, callbackData.messageId, source.contextId),
+        type: String(source.type || "text"),
+        text: infobipInboundText(source),
+        replyId,
+        raw: source,
+      };
+    })
+    .filter((message) => message.from || message.contextId);
+}
+
+function collectInfobipConversationInboundMessages(payload) {
+  return normalizeInfobipIncomingMessages(payload).map((message) => ({
+    id: message.id,
+    messageId: message.id,
+    provider: "infobip",
+    direction: "inbound",
+    conversationId: conversationIdFor(message.from),
+    contactPhone: message.from,
+    senderPhoneNumberId: "",
+    senderPhone: "",
+    senderName: "Infobip",
+    text: message.text,
+    type: message.type || "text",
+    status: "received",
+    createdAt: message.timestamp ? new Date(Number(message.timestamp) * 1000).toISOString() : new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    raw: message.raw,
+  }));
 }
 
 async function processFlowIncomingMessages(messages) {
@@ -2227,11 +2543,212 @@ async function processFlowIncomingMessages(messages) {
   return processed;
 }
 
+async function dispatchInfobipBroadcast(payload, response) {
+  const sender = asRecord(payload.sender);
+  const lots = Array.isArray(payload.lots) ? payload.lots : [];
+  const recipientRows = Array.isArray(payload.recipients)
+    ? payload.recipients
+    : lots.flatMap((lot) => {
+        const lotRecord = asRecord(lot);
+        const template = asRecord(lotRecord.template);
+        const lotSender = asRecord(lotRecord.sender);
+        const recipients = Array.isArray(lotRecord.recipients) ? lotRecord.recipients : [];
+        return recipients.map((recipient) => ({
+          ...asRecord(recipient),
+          lotId: lotRecord.id,
+          senderId: lotSender.id,
+          senderName: lotSender.name,
+          provider: "infobip",
+          apiId: lotSender.apiId || lotSender.api_id || sender.apiId || sender.api_id,
+          api_id: lotSender.api_id || lotSender.apiId || sender.api_id || sender.apiId,
+          baseUrl: lotSender.baseUrl || lotSender.base_url || sender.baseUrl || sender.base_url,
+          base_url: lotSender.base_url || lotSender.baseUrl || sender.base_url || sender.baseUrl,
+          token: lotSender.token || sender.token,
+          senderNumber: lotSender.senderNumber || lotSender.sender_number || lotSender.sender || lotSender.phone || sender.senderNumber || sender.sender_number || sender.sender || sender.phone,
+          senderPhone: lotSender.senderPhone || lotSender.phone || lotSender.sender || sender.senderPhone || sender.phone || sender.sender,
+          templateId: template.id,
+          templateName: template.name,
+          variables: template.variables,
+        }));
+      });
+
+  if (!recipientRows.length) {
+    sendJson(response, 400, { ok: false, error: "empty-recipients", message: "Nenhum destinatario recebido no lote." });
+    return;
+  }
+
+  const results = [];
+  const messageIds = [];
+  const debugMessages = [];
+  const analyticsEvents = [];
+  const conversationEvents = [];
+
+  for (const recipient of recipientRows) {
+    const recipientRecord = asRecord(recipient);
+    const phone = normalizeBrazilPhone(recipientRecord.phone || recipientRecord.telefone || recipientRecord.whatsapp);
+    const lot =
+      lots.find((item) => String(asRecord(item).id || "") === String(recipientRecord.lotId || "")) ||
+      lots.find((item) => String(asRecord(asRecord(item).sender).id || "") === String(recipientRecord.senderId || "") && String(asRecord(asRecord(item).template).id || "") === String(recipientRecord.templateId || "")) ||
+      lots.find((item) => String(asRecord(asRecord(item).template).id || "") === String(recipientRecord.templateId || "")) ||
+      lots.find((item) => String(asRecord(asRecord(item).template).name || "") === String(recipientRecord.templateName || "")) ||
+      lots[0] ||
+      {};
+    const lotSender = asRecord(asRecord(lot).sender);
+    const api = infobipApiFromSources(recipientRecord, lotSender, sender, asRecord(asRecord(lot).template));
+
+    if (!phone) {
+      analyticsEvents.push({
+        ...broadcastAnalyticsContext(payload, recipientRecord, lot, "", ""),
+        channel: "infobip_flow",
+        status: "failed",
+        failedAt: new Date().toISOString(),
+        errorMessage: "telefone invalido ou vazio",
+      });
+      results.push({ status: "failed", phone, errorMessage: "telefone invalido ou vazio" });
+      continue;
+    }
+
+    if (!api.base_url || !api.token || !api.sender_number) {
+      analyticsEvents.push({
+        ...broadcastAnalyticsContext(payload, recipientRecord, lot, phone, ""),
+        channel: "infobip_flow",
+        status: "failed",
+        failedAt: new Date().toISOString(),
+        errorMessage: "remetente Infobip sem Base URL, token ou numero",
+      });
+      results.push({ status: "failed", phone, errorMessage: "remetente Infobip sem Base URL, token ou numero" });
+      continue;
+    }
+
+    try {
+      const messagePayload = buildInfobipTemplateMessagePayload({ ...recipientRecord, phone }, lot, api);
+      const debugInfo = messagePayload._debug;
+      debugMessages.push({ phone, debug: debugInfo, payload: { ...messagePayload, _debug: undefined } });
+      if (!debugInfo.templateName) throw new Error("template sem nome");
+      const result = await sendInfobipTemplateMessage(api, messagePayload);
+      const flowSessionId = await registerFlowSession(
+        payload,
+        {
+          ...recipientRecord,
+          phone,
+          provider: "infobip",
+          token: api.token,
+          apiId: api.id,
+          api_id: api.id,
+          baseUrl: api.base_url,
+          base_url: api.base_url,
+          senderNumber: api.sender_number,
+          senderPhone: api.sender_number,
+        },
+        lot,
+        result.messageId,
+      );
+      messageIds.push(result.messageId);
+      const lotTemplate = asRecord(asRecord(lot).template);
+      const outboundText = renderTemplateText(lotTemplate, asRecord(recipientRecord.variables || lotTemplate.variables));
+      const senderName = senderAnalyticsName(lotSender, recipientRecord.senderName || senderAnalyticsName(sender, api.name));
+      conversationEvents.push({
+        id: result.messageId,
+        messageId: result.messageId,
+        provider: "infobip",
+        direction: "outbound",
+        conversationId: conversationIdFor(phone, api.sender_number),
+        contactPhone: phone,
+        recipientPhone: phone,
+        senderPhoneNumberId: api.sender_number,
+        senderPhone: api.sender_number,
+        senderName,
+        text: outboundText || `Template ${debugInfo.templateName}`,
+        type: "template",
+        templateName: debugInfo.templateName,
+        status: "accepted",
+        campaignName: firstNonEmpty(asRecord(payload.campaign).name, payload.campaignName, payload.name),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        raw: result.data,
+      });
+      analyticsEvents.push({
+        ...broadcastAnalyticsContext(payload, { ...recipientRecord, senderPhone: api.sender_number }, lot, phone, result.messageId),
+        channel: "infobip_flow",
+        bm: firstNonEmpty(api.name, "Infobip"),
+        phone: api.sender_number,
+        phoneNumberId: api.sender_number,
+        status: "accepted",
+        acceptedAt: new Date().toISOString(),
+      });
+      results.push({
+        status: "accepted",
+        phone,
+        id: result.messageId,
+        messageId: result.messageId,
+        flowSessionId,
+        templateName: debugInfo.templateName,
+      });
+    } catch (error) {
+      const lastDebug = debugMessages[debugMessages.length - 1];
+      analyticsEvents.push({
+        ...broadcastAnalyticsContext(payload, { ...recipientRecord, senderPhone: api.sender_number }, lot, phone, ""),
+        channel: "infobip_flow",
+        bm: firstNonEmpty(api.name, "Infobip"),
+        phone: api.sender_number,
+        phoneNumberId: api.sender_number,
+        status: "failed",
+        failedAt: new Date().toISOString(),
+        errorMessage: error instanceof Error ? error.message : "erro desconhecido da Infobip",
+      });
+      results.push({
+        status: "failed",
+        phone,
+        templateName: String(recipientRecord.templateName || asRecord(asRecord(lot).template).name || ""),
+        errorMessage: error instanceof Error ? error.message : "erro desconhecido da Infobip",
+        debug: lastDebug?.debug,
+      });
+    }
+  }
+
+  const accepted = results.filter((item) => item.status === "accepted").length;
+  const failed = results.filter((item) => item.status === "failed").length;
+  await appendBroadcastAnalyticsEvents(analyticsEvents);
+  await appendConversationMessages(conversationEvents);
+  lastBroadcastDebug = {
+    at: new Date().toISOString(),
+    provider: "infobip",
+    total: results.length,
+    accepted,
+    failed,
+    messages: debugMessages.slice(-20),
+    results: results.slice(-20),
+  };
+  sendJson(response, 200, {
+    ok: accepted > 0,
+    id: payload.id,
+    status: failed ? "partial" : "sent",
+    total: results.length,
+    accepted,
+    failed,
+    pending: accepted,
+    messageIds,
+    results,
+    events: results.map((item) => ({
+      type: item.status === "failed" ? "failed" : "success",
+      phone: item.phone,
+      message:
+        item.status === "failed"
+          ? `${item.phone || "destinatario"} falhou: ${item.errorMessage || "erro desconhecido"}${item.debug ? ` | body vars: ${item.debug.bodyVariables?.length || 0}, componentes: ${item.debug.componentCount || 0}` : ""}`
+          : `${item.phone} aceito pela Infobip | ${item.messageId}`,
+    })),
+  });
+}
+
 async function dispatchBroadcast(request, response) {
   try {
     const body = await readRequestBody(request);
     const payload = JSON.parse(body.toString("utf8") || "{}");
     const sender = asRecord(payload.sender);
+    if (isInfobipPayload(payload)) {
+      await dispatchInfobipBroadcast(payload, response);
+      return;
+    }
     const runtimeCredentials = asRecord(payload.runtimeCredentials);
     const token = String(runtimeCredentials.accessToken || sender.accessToken || payload.accessToken || "").trim();
     const phoneNumberId = String(runtimeCredentials.phoneNumberId || sender.phoneNumberId || sender.defaultPhoneNumberId || "").trim();
@@ -2771,6 +3288,39 @@ createServer(async (request, response) => {
       sendJson(response, 200, { ok: true, received: statuses.length + incomingMessages.length, statuses, messages: incomingMessages.length, flowRoutes });
     } catch (error) {
       sendJson(response, 400, { ok: false, error: error instanceof Error ? error.message : "invalid-webhook-payload" });
+    }
+    return;
+  }
+
+  if (request.method === "POST" && request.url?.startsWith("/infobip/webhook")) {
+    try {
+      const body = await readRequestBody(request);
+      const payload = JSON.parse(body.toString("utf8") || "{}");
+      const statuses = normalizeInfobipStatuses(payload);
+      await updateBroadcastAnalyticsStatuses(statuses);
+      await updateConversationStatuses(statuses);
+      const incomingMessages = normalizeInfobipIncomingMessages(payload);
+      const conversationInbound = collectInfobipConversationInboundMessages(payload);
+      await appendConversationMessages(conversationInbound);
+      const flowRoutes = await processFlowIncomingMessages(incomingMessages);
+      if (statuses.length) {
+        console.log(
+          `Webhook Infobip recebeu ${statuses.length} status: ${statuses
+            .map((item) => `${item.id}:${item.status}${item.errorCode ? `:${item.errorCode}` : ""}`)
+            .join(", ")}`,
+        );
+      } else if (flowRoutes.length) {
+        console.log(
+          `Webhook Infobip roteou ${flowRoutes.length} resposta(s) de fluxo: ${flowRoutes
+            .map((item) => `${item.sessionId}:${item.routed ? "ok" : "sem-rota"}`)
+            .join(", ")}`,
+        );
+      } else {
+        console.log("Webhook Infobip recebeu evento sem status de mensagem.");
+      }
+      sendJson(response, 200, { ok: true, received: statuses.length + incomingMessages.length, statuses, messages: incomingMessages.length, flowRoutes });
+    } catch (error) {
+      sendJson(response, 400, { ok: false, error: error instanceof Error ? error.message : "invalid-infobip-webhook-payload" });
     }
     return;
   }
