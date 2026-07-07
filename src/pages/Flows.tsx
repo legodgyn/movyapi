@@ -990,8 +990,20 @@ function normalizeInfobipFlowSender(api: InfobipApi, sender?: Record<string, unk
   } as InfobipApi;
 }
 
+function apiStoredSenders(api: InfobipApi) {
+  const rawGroups = [api.integrated_senders, api.integratedSenders, api.senders, api.sender_options, api.senderOptions];
+  return rawGroups
+    .flatMap((group) => (Array.isArray(group) ? group : []))
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
+}
+
+function isInfobipFlowApi(api: InfobipApi) {
+  const source = `${api.api_type || ""} ${api.provider || ""} ${api.base_url || ""} ${api.baseUrl || ""} ${api.url || ""}`.toLowerCase();
+  return source.includes("infobip") || Boolean(apiSender(api) || apiStoredSenders(api).length || api.token || api.api_key);
+}
+
 async function readInfobipFlowSenders() {
-  const apis = await infobipApis.normalizedList("whatsapp").catch(() => infobipApis.normalizedList().catch(() => [] as InfobipApi[]));
+  const apis = (await infobipApis.normalizedList().catch(() => [] as InfobipApi[])).filter(isInfobipFlowApi);
   const byApiId = new Map(apis.map((api) => [String(api.id), api]));
   const integrated = readIntegratedInfobipSenders()
     .map((sender, index) => {
@@ -1000,8 +1012,13 @@ async function readInfobipFlowSenders() {
       return api ? normalizeInfobipFlowSender(api, sender, index) : null;
     })
     .filter(Boolean) as InfobipApi[];
+  const stored = apis.flatMap((api) =>
+    apiStoredSenders(api)
+      .map((sender, index) => normalizeInfobipFlowSender(api, sender, index))
+      .filter(Boolean) as InfobipApi[],
+  );
   const manual = apis.map((api, index) => normalizeInfobipFlowSender(api, undefined, index)).filter(Boolean) as InfobipApi[];
-  return dedupeSenders(integrated.length ? integrated : manual);
+  return dedupeSenders([...integrated, ...stored, ...manual]);
 }
 
 async function fetchApprovedMetaTemplatesFromBmAccounts(extraAccounts: BmSettingsData[] = []) {
