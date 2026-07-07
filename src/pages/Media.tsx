@@ -1,4 +1,4 @@
-import { ChangeEvent, DragEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, FileAudio, FileImage, FileVideo, Image, Trash2, Upload } from "lucide-react";
 import { config } from "../lib/config";
 import { formatBytes, formatDate, labelOf } from "../lib/format";
@@ -121,6 +121,8 @@ export function Media() {
   const [items, setItems] = useState<LocalMediaItem[]>([]);
   const [status, setStatus] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  const [copiedItemId, setCopiedItemId] = useState<string | null>(null);
+  const copyFeedbackTimeout = useRef<number | null>(null);
 
   const stats = useMemo(
     () => [
@@ -198,7 +200,15 @@ export function Media() {
     }
 
     await navigator.clipboard.writeText(url);
+    setCopiedItemId(item.id);
     setStatus("Link copiado.");
+    if (copyFeedbackTimeout.current) {
+      window.clearTimeout(copyFeedbackTimeout.current);
+    }
+    copyFeedbackTimeout.current = window.setTimeout(() => {
+      setCopiedItemId(null);
+      copyFeedbackTimeout.current = null;
+    }, 1800);
   }
 
   async function removeItem(item: LocalMediaItem) {
@@ -208,6 +218,14 @@ export function Media() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (copyFeedbackTimeout.current) {
+        window.clearTimeout(copyFeedbackTimeout.current);
+      }
+    };
   }, []);
 
   return (
@@ -284,15 +302,23 @@ export function Media() {
                     {url ? <small>{url}</small> : <small>Arquivo sem link publico</small>}
                   </div>
                   <div className="media-actions">
-                    <button className="icon-button" onClick={() => copyLink(item)} title="Copiar link">
-                      <Clipboard size={15} />
+                    <button
+                      aria-label={copiedItemId === item.id ? "Link copiado" : "Copiar link"}
+                      className={copiedItemId === item.id ? "icon-button media-action-button copied" : "icon-button media-action-button"}
+                      onClick={() => copyLink(item)}
+                      title={copiedItemId === item.id ? "Link copiado" : "Copiar link"}
+                    >
+                      {copiedItemId === item.id ? <Check size={15} /> : <Clipboard size={15} />}
+                      <span className="media-action-feedback" role="status">
+                        Link copiado
+                      </span>
                     </button>
                     {url ? (
-                      <a className="icon-button" download={item.name || item.file_name || "midia"} href={url} title="Baixar">
+                      <a className="icon-button media-action-button" download={item.name || item.file_name || "midia"} href={url} title="Baixar">
                         <Download size={15} />
                       </a>
                     ) : null}
-                    <button className="icon-button" onClick={() => removeItem(item)} title="Remover">
+                    <button className="icon-button media-action-button" onClick={() => removeItem(item)} title="Remover">
                       <Trash2 size={15} />
                     </button>
                   </div>
