@@ -43,17 +43,6 @@ const BROADCAST_ANALYTICS_KEY = "movy.broadcastAnalyticsEvents";
 const CONVERSATION_MESSAGES_KEY = "movy.conversationMessages";
 const INFOBIP_APIS_KEY = "movy.infobipApis";
 const graphApiBase = "https://graph.facebook.com/v24.0";
-const publicAppUrl = normalizePublicAppUrl(
-  firstNonEmpty(
-    process.env.MOVY_PUBLIC_URL,
-    process.env.PUBLIC_APP_URL,
-    process.env.APP_URL,
-    process.env.VITE_PUBLIC_APP_URL,
-    process.env.VITE_APP_URL,
-    "https://movyapi.com.br",
-  ),
-);
-const infobipWebhookUrl = `${publicAppUrl}/local-api/infobip/webhook`;
 let lastBroadcastDebug = null;
 
 function sendJson(response, statusCode, payload) {
@@ -525,15 +514,6 @@ function normalizeInfobipBaseUrl(value) {
 
 function normalizeInfobipToken(value) {
   return String(value || "").trim().replace(/^App\s+/i, "");
-}
-
-function normalizePublicAppUrl(value) {
-  const url = String(value || "").trim() || "https://movyapi.com.br";
-  return url.replace(/\/+$/, "");
-}
-
-function infobipDeliveryTracking() {
-  return { notifyUrl: infobipWebhookUrl };
 }
 
 function translateInfobipError(code, text) {
@@ -1937,7 +1917,6 @@ function buildInfobipTemplateMessagePayload(recipient, lot, api) {
         from: api.sender_number,
         to: phone,
         content,
-        ...infobipDeliveryTracking(),
       },
     ],
     _debug: {
@@ -1971,7 +1950,6 @@ function infobipMessageBody(from, to, content, extra = {}) {
         from,
         to,
         content,
-        ...infobipDeliveryTracking(),
         ...extra,
       },
     ],
