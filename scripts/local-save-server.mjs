@@ -543,10 +543,24 @@ function infobipErrorMessage(status, payload, raw) {
     requestError.serviceException && typeof requestError.serviceException === "object"
       ? requestError.serviceException
       : {};
+  const validationErrors = Array.isArray(serviceException.validationErrors)
+    ? serviceException.validationErrors
+    : Array.isArray(record.validationErrors)
+      ? record.validationErrors
+      : [];
+  const validationText = validationErrors
+    .map((item) => {
+      if (!item || typeof item !== "object") return String(item || "");
+      return [item.field, item.message, item.text, item.description].filter(Boolean).join(": ");
+    })
+    .filter(Boolean)
+    .join(" | ");
   const parts = [
     record.errorCode,
+    serviceException.messageId,
     serviceException.text,
     serviceException.message,
+    validationText,
     record.description,
     record.action,
     record.message,
@@ -558,7 +572,10 @@ function infobipErrorMessage(status, payload, raw) {
   const text = parts.join(" - ");
   const translated = translateInfobipError(parts[0] || status, `${text} ${raw || ""}`);
   if (translated) return text ? `${translated} Detalhe tecnico: ${text}` : translated;
-  return text || String(raw || "").trim() || `Infobip retornou HTTP ${status}`;
+  const rawText = String(raw || "").trim();
+  if (text) return text;
+  if (rawText) return `Infobip retornou HTTP ${status}: ${rawText.slice(0, 700)}`;
+  return `Infobip retornou HTTP ${status}`;
 }
 
 function extractInfobipList(payload) {
@@ -1897,6 +1914,21 @@ function buildInfobipTemplateMessagePayload(recipient, lot, api) {
   const phone = normalizeBrazilPhone(recipient.phone || recipient.telefone || recipient.whatsapp);
   const bodyVariables = extractVariablesFromText(templateBodyText(template));
   const placeholders = bodyVariables.map((variable) => variableValue(variables, variable));
+  const templateName = String(recipient.templateName || template.name || "");
+  const missingBodyVariables = bodyVariables.filter((_, index) => !String(placeholders[index] || "").trim());
+  if (missingBodyVariables.length) {
+    const error = new Error(
+      `Preencha ${missingBodyVariables.join(", ")} do template ${templateName || "selecionado"} antes de disparar.`,
+    );
+    error.statusCode = 400;
+    error.debug = {
+      templateName,
+      bodyVariables,
+      missingBodyVariables,
+      placeholders,
+    };
+    throw error;
+  }
   const templateData = {};
   if (placeholders.length) templateData.body = { placeholders };
   const media = infobipTemplateMedia(template);
@@ -1907,7 +1939,7 @@ function buildInfobipTemplateMessagePayload(recipient, lot, api) {
     };
   }
   const content = {
-    templateName: String(recipient.templateName || template.name || ""),
+    templateName,
     language: normalizeInfobipLanguage(template.language || recipient.language || "pt_BR"),
     ...(Object.keys(templateData).length ? { templateData } : {}),
   };
