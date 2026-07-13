@@ -73,6 +73,7 @@ type TransmissionCampaign = {
 
 const CAMPAIGN_KEY = "movy.infobipTransmissions";
 const LOCAL_INFOBIP_SENDERS_KEY = "movy.infobipSenders";
+const LOCAL_INFOBIP_SENT_TEMPLATES_KEY = "movy.infobipSentTemplates";
 
 const steps: Array<{ key: StepKey; title: string; subtitle: string }> = [
   { key: "sender", title: "Remetente", subtitle: "Canal Infobip" },
@@ -245,6 +246,15 @@ function readIntegratedInfobipSenders() {
   }
 }
 
+function readLocalInfobipTemplates() {
+  try {
+    const items = JSON.parse(localStorage.getItem(LOCAL_INFOBIP_SENT_TEMPLATES_KEY) || "[]") as SavedTemplate[];
+    return Array.isArray(items) ? items.filter(isInfobipTemplate) : [];
+  } catch {
+    return [];
+  }
+}
+
 function templateStatus(template: SavedTemplate) {
   return String(template.infobip_status || template.status || template.meta_status || "").trim().toUpperCase();
 }
@@ -258,6 +268,16 @@ function isInfobipTemplate(template: SavedTemplate) {
 function isTemplateReady(template: SavedTemplate) {
   const status = templateStatus(template);
   return !status || ["APPROVED", "ACTIVE", "ENABLED", "PENDING"].includes(status);
+}
+
+function templateMatchesSender(template: SavedTemplate, sender?: SenderOption) {
+  if (!sender) return true;
+  const templateRecord = asRecord(template);
+  const templateApi = pickString(templateRecord, ["api_id", "apiId", "api"]);
+  const templateSender = formatPhone(pickString(templateRecord, ["sender_number", "senderNumber", "sender", "from", "phone", "phoneNumber"]));
+  if (templateApi && templateApi !== sender.apiId) return false;
+  if (templateSender && templateSender !== sender.phone) return false;
+  return true;
 }
 
 function uniqueBy<T>(items: T[], keyFn: (item: T) => string) {
@@ -395,12 +415,14 @@ export function InfobipTransmissions() {
 
   const filteredTemplates = useMemo(() => {
     const q = templateQuery.toLowerCase();
-    return templates.filter((template) =>
-      [template.name, templateText(template), templateStatus(template), template.sender_number, template.api_name]
-        .map((value) => String(value || "").toLowerCase())
-        .some((value) => value.includes(q)),
-    );
-  }, [templates, templateQuery]);
+    return templates
+      .filter((template) => templateMatchesSender(template, selectedSender))
+      .filter((template) =>
+        [template.name, templateText(template), templateStatus(template), template.sender_number, template.api_name]
+          .map((value) => String(value || "").toLowerCase())
+          .some((value) => value.includes(q)),
+      );
+  }, [templates, templateQuery, selectedSender]);
 
   const filteredTags = useMemo(() => {
     const q = tagQuery.toLowerCase();
@@ -442,6 +464,13 @@ export function InfobipTransmissions() {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    setTemplateIds((current) => current.filter((id) => {
+      const template = templates.find((item) => item.id === id);
+      return template ? templateMatchesSender(template, selectedSender) : false;
+    }));
+  }, [selectedSenderId, selectedSender, templates]);
 
   async function loadSenders() {
     const apis = (await infobipApis.normalizedList().catch(() => [] as InfobipApi[])).filter(isInfobipApi);
@@ -493,7 +522,8 @@ export function InfobipTransmissions() {
   async function loadTemplates() {
     const sent = await savedTemplates.normalizedList("Infobip Enviados").catch(() => [] as SavedTemplate[]);
     const fallback = sent.length ? [] : await savedTemplates.normalizedList().catch(() => [] as SavedTemplate[]);
-    return uniqueBy([...sent, ...fallback].filter(isInfobipTemplate).filter(isTemplateReady), (template) =>
+    const localSent = readLocalInfobipTemplates();
+    return uniqueBy([...localSent, ...sent, ...fallback].filter(isInfobipTemplate).filter(isTemplateReady), (template) =>
       String(template.id || `${template.name}:${template.sender_number || ""}`),
     );
   }
@@ -842,7 +872,7 @@ export function InfobipTransmissions() {
 
           {step === "templates" ? (
             <WizardSection icon={<Sparkles size={18} />} title="Selecione os templates" subtitle="Use a mesma quantidade de templates e etiquetas.">
-              <SearchBar value={templateQuery} onChange={setTemplateQuery} placeholder="Buscar template por nome, conteudo ou status..." count={`${templateIds.length} selecionado(s) de ${templates.length}`} />
+              <SearchBar value={templateQuery} onChange={setTemplateQuery} placeholder="Buscar template por nome, conteudo ou status..." count={`${templateIds.length} selecionado(s) de ${filteredTemplates.length}`} />
               <div className="infobip-selection-list compact">
                 {filteredTemplates.map((template) => (
                   <button className={`infobip-select-row ${templateIds.includes(template.id) ? "selected" : ""}`} key={template.id} type="button" onClick={() => toggleTemplate(template.id)}>
