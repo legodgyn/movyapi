@@ -991,7 +991,7 @@ function normalizeInfobipFlowSender(api: InfobipApi, sender?: Record<string, unk
 }
 
 function apiStoredSenders(api: InfobipApi) {
-  const rawGroups = [api.integrated_senders, api.integratedSenders, api.senders, api.sender_options, api.senderOptions];
+  const rawGroups = [api.integrated_senders, api.integratedSenders];
   return rawGroups
     .flatMap((group) => (Array.isArray(group) ? group : []))
     .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
@@ -1017,8 +1017,7 @@ async function readInfobipFlowSenders() {
       .map((sender, index) => normalizeInfobipFlowSender(api, sender, index))
       .filter(Boolean) as InfobipApi[],
   );
-  const manual = apis.map((api, index) => normalizeInfobipFlowSender(api, undefined, index)).filter(Boolean) as InfobipApi[];
-  return dedupeSenders([...integrated, ...stored, ...manual]);
+  return dedupeSenders([...integrated, ...stored]);
 }
 
 async function fetchApprovedMetaTemplatesFromBmAccounts(extraAccounts: BmSettingsData[] = []) {

@@ -456,13 +456,7 @@ export function InfobipTransmissions() {
           const token = pickString(apiRecord, ["token", "apiKey", "api_key", "accessToken", "authorization"]);
           const integratedFromApi = Array.isArray(apiRecord.integrated_senders) ? (apiRecord.integrated_senders as Record<string, unknown>[]) : [];
           const integrated = [...localIntegrated, ...integratedFromApi].filter((sender) => String(sender.apiId || sender.api_id || "") === apiId);
-          const cached = Array.isArray(apiRecord.senders) ? (apiRecord.senders as Record<string, unknown>[]) : [];
-          const synced = await infobipApis.normalizedSenders(apiId).catch(() => cached);
-          const fallback = [{
-            name: pickString(apiRecord, ["sender_name", "senderName", "name", "label"]),
-            sender_number: pickString(apiRecord, ["sender_number", "senderNumber", "phone", "phoneNumber", "number"]),
-          }];
-          const rawSenders = uniqueBy([...integrated, ...synced, ...cached, ...fallback], (sender) => {
+          const rawSenders = uniqueBy(integrated, (sender) => {
             const senderRecord = asRecord(sender);
             return (
               pickString(senderRecord, ["id", "senderId", "sender_id", "sender", "sender_number", "senderNumber", "phone", "phoneNumber", "number"]) ||
