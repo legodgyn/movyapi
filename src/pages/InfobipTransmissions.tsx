@@ -1205,11 +1205,11 @@ export function InfobipTransmissions() {
           ) : null}
 
           {step === "dispatch" ? (
-            <WizardSection icon={<Send size={18} />} title="Pacote Broadcast" subtitle="Gere os arquivos para montar o Broadcast manualmente no painel da Infobip.">
+            <WizardSection icon={<Send size={18} />} title="Transmissao Infobip" subtitle="Revise o lote e dispare direto pela API da Infobip.">
               <div className="dispatch-summary">
                 <label className="field">
-                <span>Nome do pacote</span>
-                <input className="input" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} />
+                  <span>Nome da transmissao</span>
+                  <input className="input" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} />
                 </label>
                 <div>
                   <span>Remetente</span>
@@ -1248,7 +1248,7 @@ export function InfobipTransmissions() {
                     </div>
                   ))
                 ) : (
-                  <p className="muted">Clique em baixar pacote para gerar os CSVs e o resumo para subir no Broadcast da Infobip.</p>
+                  <p className="muted">Clique em enviar para criar a transmissao e disparar pelo canal Infobip.</p>
                 )}
               </div>
               {status ? <p className="list-status error">{status}</p> : null}
@@ -1263,13 +1263,13 @@ export function InfobipTransmissions() {
           </button>
           {step === "dispatch" ? (
             <div className="infobip-footer-actions">
-              <button className="button secondary" type="button" disabled={!canContinue() || run.status === "sending" || packageStatus === "building"} onClick={handlePrepareTransmission}>
-                <Send size={16} />
-                {run.status === "sending" ? "Enviando..." : "Disparar via API"}
-              </button>
-              <button className="button" type="button" disabled={!canContinue() || packageStatus === "building"} onClick={handleDownloadManualPackage}>
+              <button className="button secondary" type="button" disabled={!canContinue() || run.status === "sending" || packageStatus === "building"} onClick={handleDownloadManualPackage}>
                 <Download size={16} />
-                {packageStatus === "building" ? "Gerando..." : "Baixar pacote Broadcast"}
+                {packageStatus === "building" ? "Gerando..." : "Baixar pacote manual"}
+              </button>
+              <button className="button" type="button" disabled={!canContinue() || run.status === "sending" || packageStatus === "building"} onClick={handlePrepareTransmission}>
+                <Send size={16} />
+                {run.status === "sending" ? "Enviando..." : "Enviar para Infobip"}
               </button>
             </div>
           ) : (
