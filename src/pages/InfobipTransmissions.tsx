@@ -72,6 +72,7 @@ type TransmissionCampaign = {
 };
 
 const CAMPAIGN_KEY = "movy.infobipTransmissions";
+const LOCAL_INFOBIP_SENDERS_KEY = "movy.infobipSenders";
 
 const steps: Array<{ key: StepKey; title: string; subtitle: string }> = [
   { key: "sender", title: "Remetente", subtitle: "Canal Infobip" },
@@ -228,6 +229,20 @@ function templateMediaType(template: SavedTemplate) {
 
 function needsMedia(template: SavedTemplate) {
   return ["image", "video", "document"].some((type) => templateMediaType(template).includes(type));
+}
+
+function isInfobipApi(api: InfobipApi) {
+  const type = String(api.api_type || api.provider || "").toLowerCase();
+  return !type || type.includes("infobip") || type.includes("whatsapp");
+}
+
+function readIntegratedInfobipSenders() {
+  try {
+    const items = JSON.parse(localStorage.getItem(LOCAL_INFOBIP_SENDERS_KEY) || "[]") as Record<string, unknown>[];
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
 }
 
 function templateStatus(template: SavedTemplate) {
@@ -429,7 +444,8 @@ export function InfobipTransmissions() {
   }
 
   async function loadSenders() {
-    const apis = await infobipApis.normalizedList("whatsapp").catch(() => infobipApis.normalizedList());
+    const apis = (await infobipApis.normalizedList().catch(() => [] as InfobipApi[])).filter(isInfobipApi);
+    const localIntegrated = readIntegratedInfobipSenders();
     const options = (
       await Promise.all(
         apis.map(async (api) => {
@@ -438,11 +454,21 @@ export function InfobipTransmissions() {
           const apiName = pickString(apiRecord, ["name", "label", "title"]) || `API ${apiId}`;
           const baseUrl = pickString(apiRecord, ["base_url", "baseUrl", "url", "base"]);
           const token = pickString(apiRecord, ["token", "apiKey", "api_key", "accessToken", "authorization"]);
-          const synced = await infobipApis.normalizedSenders(apiId).catch(() => [] as Record<string, unknown>[]);
-          const rawSenders = synced.length ? synced : [{
+          const integratedFromApi = Array.isArray(apiRecord.integrated_senders) ? (apiRecord.integrated_senders as Record<string, unknown>[]) : [];
+          const integrated = [...localIntegrated, ...integratedFromApi].filter((sender) => String(sender.apiId || sender.api_id || "") === apiId);
+          const cached = Array.isArray(apiRecord.senders) ? (apiRecord.senders as Record<string, unknown>[]) : [];
+          const synced = await infobipApis.normalizedSenders(apiId).catch(() => cached);
+          const fallback = [{
             name: pickString(apiRecord, ["sender_name", "senderName", "name", "label"]),
             sender_number: pickString(apiRecord, ["sender_number", "senderNumber", "phone", "phoneNumber", "number"]),
           }];
+          const rawSenders = uniqueBy([...integrated, ...synced, ...cached, ...fallback], (sender) => {
+            const senderRecord = asRecord(sender);
+            return (
+              pickString(senderRecord, ["id", "senderId", "sender_id", "sender", "sender_number", "senderNumber", "phone", "phoneNumber", "number"]) ||
+              JSON.stringify(sender)
+            );
+          });
 
           return rawSenders
             .map((raw, index) => {
