@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import JSZip from "jszip";
 import type { ComponentType, ReactNode } from "react";
 import {
   ArrowLeft,
@@ -6,6 +7,7 @@ import {
   Check,
   CheckCircle2,
   Clock3,
+  Download,
   FileText,
   Layers3,
   Megaphone,
@@ -26,6 +28,7 @@ import type { ContactItem, ContactTag, InfobipApi, SavedTemplate } from "../lib/
 type StepKey = "sender" | "templates" | "tags" | "customize" | "dispatch";
 type ViewMode = "dashboard" | "wizard";
 type RunStatus = "idle" | "sending" | "done" | "failed";
+type PackageStatus = "idle" | "building" | "done" | "failed";
 
 type SenderOption = {
   id: string;
@@ -377,11 +380,54 @@ function formatBackendError(error: unknown) {
   return String(record.message || record.error || "Erro desconhecido");
 }
 
-async function prepareInfobipTransmission(payload: Record<string, unknown>) {
+function csvCell(value: unknown) {
+  const text = String(value ?? "");
+  if (/[",\n\r;]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function createCsv(rows: Record<string, unknown>[], columns: string[]) {
+  const header = columns.map(csvCell).join(",");
+  const body = rows.map((row) => columns.map((column) => csvCell(row[column])).join(",")).join("\n");
+  return `\uFEFF${header}${body ? `\n${body}` : ""}`;
+}
+
+function slugFileName(value: unknown, fallback = "arquivo") {
+  const text = String(value || fallback)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return text || fallback;
+}
+
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function contactName(contact: Recipient) {
+  return pickString(asRecord(contact), ["name", "nome", "full_name", "fullName", "cliente", "contato"]);
+}
+
+function uniqueVariables(templates: SavedTemplate[]) {
+  return Array.from(new Set(templates.flatMap((template) => templateVariables(template)))).sort(
+    (a, b) => Number(a) - Number(b) || a.localeCompare(b),
+  );
+}
+
+async function prepareInfobipTransmission(payload: Record<string, unknown>, dispatch = true) {
   const response = await fetch(`${localBackendUrl()}/infobip/transmissions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...payload, dispatch: true }),
+    body: JSON.stringify({ ...payload, dispatch }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -415,6 +461,7 @@ export function InfobipTransmissions() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
   const [run, setRun] = useState(defaultRun);
+  const [packageStatus, setPackageStatus] = useState<PackageStatus>("idle");
 
   useEffect(() => {
     void loadData();
@@ -567,6 +614,7 @@ export function InfobipTransmissions() {
     setTagIds([]);
     setCustomizations({});
     setRun(defaultRun);
+    setPackageStatus("idle");
     setStatus("");
     setCampaignName(`Infobip ${new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`);
     setView("wizard");
@@ -629,107 +677,114 @@ export function InfobipTransmissions() {
     setStep(steps[activeIndex - 1].key);
   }
 
+  async function buildTransmissionPayload(statusValue = "prepared") {
+    if (!selectedSender || !expectedMatch) throw new Error("Selecione remetente, templates e etiquetas antes de continuar.");
+    const pairs = selectedTemplates.map((template, index) => ({ template, tag: selectedTags[index] }));
+    const recipientsByPair = await Promise.all(pairs.map(async (pair) => ({ ...pair, recipients: await fetchTagRecipients(pair.tag) })));
+    const senderPayload = {
+      id: selectedSender.id,
+      provider: "infobip",
+      apiType: "infobip",
+      api_type: "whatsapp",
+      apiId: selectedSender.apiId,
+      api_id: selectedSender.apiId,
+      apiName: selectedSender.apiName,
+      api_name: selectedSender.apiName,
+      name: selectedSender.name,
+      label: senderLabel(selectedSender),
+      senderName: selectedSender.name,
+      sender_number: selectedSender.phone,
+      senderNumber: selectedSender.phone,
+      phone: selectedSender.phone,
+      base_url: selectedSender.baseUrl,
+      baseUrl: selectedSender.baseUrl,
+      token: selectedSender.token,
+    };
+
+    const lots = recipientsByPair.map((pair, index) => {
+      const customization = customizations[pair.template.id] || { variables: {}, mediaUrl: "" };
+      return {
+        id: `infobip-${Date.now()}-${index}`,
+        provider: "infobip",
+        sender: senderPayload,
+        template: {
+          ...pair.template,
+          provider: "infobip",
+          name: pair.template.name,
+          body_text: templateText(pair.template),
+          bodyText: templateText(pair.template),
+          variables: customization.variables,
+          media_url: customization.mediaUrl || pair.template.media_url || "",
+        },
+        tag: {
+          id: pair.tag.id,
+          name: tagName(pair.tag),
+          count: pair.recipients.length,
+        },
+        audience: {
+          tagId: pair.tag.id,
+          tagName: tagName(pair.tag),
+          contacts: pair.recipients.length,
+        },
+      };
+    });
+
+    const recipients = recipientsByPair.flatMap((pair, index) => {
+      const lot = lots[index];
+      const customization = customizations[pair.template.id] || { variables: {}, mediaUrl: "" };
+      return pair.recipients.map((recipient) => ({
+        ...recipient,
+        lotId: lot.id,
+        templateId: pair.template.id,
+        templateName: pair.template.name,
+        variables: customization.variables,
+        provider: "infobip",
+        apiId: selectedSender.apiId,
+        api_id: selectedSender.apiId,
+        baseUrl: selectedSender.baseUrl,
+        base_url: selectedSender.baseUrl,
+        token: selectedSender.token,
+        senderNumber: selectedSender.phone,
+        sender_number: selectedSender.phone,
+        senderName: selectedSender.name,
+      }));
+    });
+
+    if (!recipients.length) throw new Error("Nenhum contato encontrado nas etiquetas selecionadas.");
+
+    const payload = {
+      id: crypto.randomUUID(),
+      provider: "infobip",
+      channel: "infobip",
+      mode: "infobip_transmission",
+      status: statusValue,
+      createdAt: new Date().toISOString(),
+      campaignName,
+      createdBy: "Admin",
+      sender: senderPayload,
+      campaign: {
+        name: campaignName,
+        type: "infobip",
+        createdAt: new Date().toISOString(),
+      },
+      totals: {
+        contacts: recipients.length,
+        lots: lots.length,
+      },
+      lots,
+      recipients,
+    };
+    return { payload, lots, recipients, recipientsByPair, senderPayload };
+  }
+
   async function handlePrepareTransmission() {
     if (!selectedSender || !expectedMatch || run.status === "sending") return;
     setRun({ ...defaultRun, status: "sending", total: totalRecipients, pending: totalRecipients, events: [{ id: crypto.randomUUID(), type: "info", message: "Enviando transmissao pela Infobip.", time: nowTime() }] });
+    setPackageStatus("idle");
     setStatus("");
 
     try {
-      const pairs = selectedTemplates.map((template, index) => ({ template, tag: selectedTags[index] }));
-      const recipientsByPair = await Promise.all(pairs.map(async (pair) => ({ ...pair, recipients: await fetchTagRecipients(pair.tag) })));
-      const senderPayload = {
-        id: selectedSender.id,
-        provider: "infobip",
-        apiType: "infobip",
-        api_type: "whatsapp",
-        apiId: selectedSender.apiId,
-        api_id: selectedSender.apiId,
-        apiName: selectedSender.apiName,
-        api_name: selectedSender.apiName,
-        name: selectedSender.name,
-        label: senderLabel(selectedSender),
-        senderName: selectedSender.name,
-        sender_number: selectedSender.phone,
-        senderNumber: selectedSender.phone,
-        phone: selectedSender.phone,
-        base_url: selectedSender.baseUrl,
-        baseUrl: selectedSender.baseUrl,
-        token: selectedSender.token,
-      };
-
-      const lots = recipientsByPair.map((pair, index) => {
-        const customization = customizations[pair.template.id] || { variables: {}, mediaUrl: "" };
-        return {
-          id: `infobip-${Date.now()}-${index}`,
-          provider: "infobip",
-          sender: senderPayload,
-          template: {
-            ...pair.template,
-            provider: "infobip",
-            name: pair.template.name,
-            body_text: templateText(pair.template),
-            bodyText: templateText(pair.template),
-            variables: customization.variables,
-            media_url: customization.mediaUrl || pair.template.media_url || "",
-          },
-          tag: {
-            id: pair.tag.id,
-            name: tagName(pair.tag),
-            count: pair.recipients.length,
-          },
-          audience: {
-            tagId: pair.tag.id,
-            tagName: tagName(pair.tag),
-            contacts: pair.recipients.length,
-          },
-        };
-      });
-
-      const recipients = recipientsByPair.flatMap((pair, index) => {
-        const lot = lots[index];
-        const customization = customizations[pair.template.id] || { variables: {}, mediaUrl: "" };
-        return pair.recipients.map((recipient) => ({
-          ...recipient,
-          lotId: lot.id,
-          templateId: pair.template.id,
-          templateName: pair.template.name,
-          variables: customization.variables,
-          provider: "infobip",
-          apiId: selectedSender.apiId,
-          api_id: selectedSender.apiId,
-          baseUrl: selectedSender.baseUrl,
-          base_url: selectedSender.baseUrl,
-          token: selectedSender.token,
-          senderNumber: selectedSender.phone,
-          sender_number: selectedSender.phone,
-          senderName: selectedSender.name,
-        }));
-      });
-
-      if (!recipients.length) throw new Error("Nenhum contato encontrado nas etiquetas selecionadas.");
-
-      const payload = {
-        id: crypto.randomUUID(),
-        provider: "infobip",
-        channel: "infobip",
-        mode: "infobip_transmission",
-        status: "sending",
-        createdAt: new Date().toISOString(),
-        campaignName,
-        createdBy: "Admin",
-        sender: senderPayload,
-        campaign: {
-          name: campaignName,
-          type: "infobip",
-          createdAt: new Date().toISOString(),
-        },
-        totals: {
-          contacts: recipients.length,
-          lots: lots.length,
-        },
-        lots,
-        recipients,
-      };
+      const { payload, recipients } = await buildTransmissionPayload("sending");
 
       const response = await prepareInfobipTransmission(payload);
       const record = asRecord(response);
@@ -771,6 +826,155 @@ export function InfobipTransmissions() {
       setCampaigns(nextCampaigns);
       saveCampaigns(nextCampaigns);
     } catch (error) {
+      setRun((current) => ({
+        ...current,
+        status: "failed",
+        failed: current.total || 1,
+        pending: 0,
+        events: [
+          { id: crypto.randomUUID(), type: "failed", message: formatBackendError(error), time: nowTime() },
+          ...current.events,
+        ],
+      }));
+      setStatus(formatBackendError(error));
+    }
+  }
+
+  async function handleDownloadManualPackage() {
+    if (!selectedSender || !expectedMatch || packageStatus === "building") return;
+    setPackageStatus("building");
+    setStatus("");
+    setRun({
+      ...defaultRun,
+      status: "sending",
+      total: totalRecipients,
+      pending: totalRecipients,
+      events: [{ id: crypto.randomUUID(), type: "info", message: "Montando pacote manual para Broadcast Infobip.", time: nowTime() }],
+    });
+
+    try {
+      const { payload, lots, recipients, recipientsByPair } = await buildTransmissionPayload("prepared");
+      const variableKeys = uniqueVariables(selectedTemplates);
+      const variableColumns = variableKeys.map((key) => `variavel_${key}`);
+      const baseColumns = ["telefone", "nome", "etiqueta", "template", "remetente", "media_url"];
+      const columns = [...baseColumns, ...variableColumns];
+      const rowForRecipient = (recipient: Record<string, unknown>) => {
+        const variables = asRecord(recipient.variables);
+        const lot = asRecord(lots.find((item) => String(asRecord(item).id) === String(recipient.lotId)) || {});
+        const template = asRecord(lot.template);
+        const row: Record<string, unknown> = {
+          telefone: recipient.phone,
+          nome: contactName(recipient as Recipient),
+          etiqueta: recipient.tagName || asRecord(lot.tag).name || "",
+          template: recipient.templateName || template.name || "",
+          remetente: selectedSender ? senderLabel(selectedSender) : "",
+          media_url: template.media_url || "",
+        };
+        for (const key of variableKeys) row[`variavel_${key}`] = variables[key] || "";
+        return row;
+      };
+
+      const zip = new JSZip();
+      zip.file("contatos_infobip.csv", createCsv(recipients.map(rowForRecipient), columns));
+      recipientsByPair.forEach((pair, index) => {
+        const template = pair.template;
+        const tag = pair.tag;
+        const pairRows = pair.recipients.map((recipient) => {
+          const customization = customizations[template.id] || { variables: {}, mediaUrl: "" };
+          return rowForRecipient({
+            ...recipient,
+            templateName: template.name,
+            tagName: tagName(tag),
+            variables: customization.variables,
+            media_url: customization.mediaUrl || String(template.media_url || ""),
+          });
+        });
+        const filename = `${String(index + 1).padStart(2, "0")}-${slugFileName(tagName(tag))}-${slugFileName(template.name)}.csv`;
+        zip.file(`contatos_por_etiqueta/${filename}`, createCsv(pairRows, columns));
+      });
+
+      const summary = [
+        `Transmissao: ${campaignName}`,
+        `Criada em: ${new Date().toLocaleString("pt-BR")}`,
+        `Canal: Infobip Broadcast manual`,
+        `Remetente: ${senderLabel(selectedSender)}`,
+        `Base URL: ${selectedSender.baseUrl || "-"}`,
+        `Total de contatos: ${recipients.length.toLocaleString("pt-BR")}`,
+        `Templates: ${selectedTemplates.length}`,
+        `Etiquetas: ${selectedTags.length}`,
+        "",
+        "Mapa template x etiqueta",
+        ...recipientsByPair.flatMap((pair, index) => {
+          const customization = customizations[pair.template.id] || { variables: {}, mediaUrl: "" };
+          const variables = templateVariables(pair.template);
+          return [
+            `${index + 1}. Template: ${pair.template.name}`,
+            `   Etiqueta: ${tagName(pair.tag)} (${pair.recipients.length.toLocaleString("pt-BR")} contato(s))`,
+            `   Midia: ${customization.mediaUrl || String(pair.template.media_url || "-")}`,
+            `   Variaveis: ${variables.length ? variables.map((key) => `{{${key}}}=${customization.variables[key] || ""}`).join(" | ") : "-"}`,
+          ];
+        }),
+        "",
+        "Arquivos",
+        "- contatos_infobip.csv: base completa.",
+        "- contatos_por_etiqueta/: um CSV por template/etiqueta.",
+        "- transmissao.json: estrutura sem token para conferencia.",
+      ].join("\n");
+      zip.file("resumo_transmissao.txt", summary);
+
+      const publicPayload = {
+        ...payload,
+        sender: {
+          ...asRecord(payload.sender),
+          token: undefined,
+        },
+        recipients: recipients.map((recipient) => ({
+          ...recipient,
+          token: undefined,
+          baseUrl: undefined,
+          base_url: undefined,
+        })),
+      };
+      zip.file("transmissao.json", JSON.stringify(publicPayload, null, 2));
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      const filename = `${slugFileName(campaignName, "transmissao-infobip")}-pacote-infobip.zip`;
+      triggerBlobDownload(blob, filename);
+      void prepareInfobipTransmission(payload, false).catch(() => undefined);
+
+      const nextRun = {
+        ...defaultRun,
+        status: "done" as RunStatus,
+        total: recipients.length,
+        pending: 0,
+        accepted: 0,
+        failed: 0,
+        events: [
+          { id: crypto.randomUUID(), type: "success" as const, message: `Pacote ${filename} gerado com ${recipients.length.toLocaleString("pt-BR")} contato(s).`, time: nowTime() },
+          { id: crypto.randomUUID(), type: "info" as const, message: "Suba o CSV correspondente no Broadcast da Infobip e selecione o template indicado no resumo.", time: nowTime() },
+        ],
+      };
+      setRun(nextRun);
+      setPackageStatus("done");
+      setStatus("");
+      const nextCampaign: TransmissionCampaign = {
+        id: String(asRecord(payload).id || crypto.randomUUID()),
+        name: campaignName,
+        sender: senderLabel(selectedSender),
+        templates: selectedTemplates.length,
+        tags: selectedTags.length,
+        total: recipients.length,
+        accepted: 0,
+        delivered: 0,
+        failed: 0,
+        status: "prepared",
+        createdAt: new Date().toISOString(),
+      };
+      const nextCampaigns = uniqueBy([nextCampaign, ...campaigns], (campaign) => campaign.id);
+      setCampaigns(nextCampaigns);
+      saveCampaigns(nextCampaigns);
+    } catch (error) {
+      setPackageStatus("failed");
       setRun((current) => ({
         ...current,
         status: "failed",
@@ -1001,11 +1205,11 @@ export function InfobipTransmissions() {
           ) : null}
 
           {step === "dispatch" ? (
-            <WizardSection icon={<Send size={18} />} title="Transmissao" subtitle="Revise e envie o lote pela Infobip.">
+            <WizardSection icon={<Send size={18} />} title="Pacote Broadcast" subtitle="Gere os arquivos para montar o Broadcast manualmente no painel da Infobip.">
               <div className="dispatch-summary">
                 <label className="field">
-                  <span>Nome da transmissao</span>
-                  <input className="input" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} />
+                <span>Nome do pacote</span>
+                <input className="input" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} />
                 </label>
                 <div>
                   <span>Remetente</span>
@@ -1044,7 +1248,7 @@ export function InfobipTransmissions() {
                     </div>
                   ))
                 ) : (
-                  <p className="muted">Clique em enviar para criar a transmissao e disparar pelo canal Infobip.</p>
+                  <p className="muted">Clique em baixar pacote para gerar os CSVs e o resumo para subir no Broadcast da Infobip.</p>
                 )}
               </div>
               {status ? <p className="list-status error">{status}</p> : null}
@@ -1058,10 +1262,16 @@ export function InfobipTransmissions() {
             Voltar
           </button>
           {step === "dispatch" ? (
-            <button className="button" type="button" disabled={!canContinue() || run.status === "sending"} onClick={handlePrepareTransmission}>
-              <Send size={16} />
-              {run.status === "sending" ? "Enviando..." : "Enviar para Infobip"}
-            </button>
+            <div className="infobip-footer-actions">
+              <button className="button secondary" type="button" disabled={!canContinue() || run.status === "sending" || packageStatus === "building"} onClick={handlePrepareTransmission}>
+                <Send size={16} />
+                {run.status === "sending" ? "Enviando..." : "Disparar via API"}
+              </button>
+              <button className="button" type="button" disabled={!canContinue() || packageStatus === "building"} onClick={handleDownloadManualPackage}>
+                <Download size={16} />
+                {packageStatus === "building" ? "Gerando..." : "Baixar pacote Broadcast"}
+              </button>
+            </div>
           ) : (
             <button className="button" type="button" disabled={!canContinue()} onClick={goNext}>
               Continuar

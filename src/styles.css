@@ -12369,6 +12369,18 @@ table td,
   padding: 14px 20px;
 }
 
+.infobip-footer-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.infobip-footer-actions .button {
+  min-width: 180px;
+}
+
 .live-events-card.compact {
   max-height: 260px;
   overflow: auto;
