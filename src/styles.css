@@ -12013,6 +12013,11 @@ table td,
   color: hsl(151 70% 64%);
 }
 
+.infobip-status.prepared {
+  background: hsl(272 92% 70% / .18);
+  color: hsl(272 92% 78%);
+}
+
 .infobip-status.failed {
   background: hsl(4 92% 64% / .16);
   color: hsl(4 92% 74%);

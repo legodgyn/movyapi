@@ -17,7 +17,7 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { broadcasts, contacts, infobipApis, savedTemplates } from "../lib/services";
+import { contacts, infobipApis, savedTemplates } from "../lib/services";
 import { config } from "../lib/config";
 import { unwrapList } from "../lib/api";
 import { labelOf } from "../lib/format";
@@ -25,7 +25,7 @@ import type { ContactItem, ContactTag, InfobipApi, SavedTemplate } from "../lib/
 
 type StepKey = "sender" | "templates" | "tags" | "customize" | "dispatch";
 type ViewMode = "dashboard" | "wizard";
-type RunStatus = "idle" | "sending" | "done" | "failed";
+type RunStatus = "idle" | "preparing" | "done" | "failed";
 
 type SenderOption = {
   id: string;
@@ -67,7 +67,7 @@ type TransmissionCampaign = {
   accepted: number;
   delivered: number;
   failed: number;
-  status: "draft" | "sending" | "done" | "failed";
+  status: "draft" | "prepared" | "done" | "failed";
   createdAt: string;
 };
 
@@ -80,7 +80,7 @@ const steps: Array<{ key: StepKey; title: string; subtitle: string }> = [
   { key: "templates", title: "Templates", subtitle: "Modelos enviados" },
   { key: "tags", title: "Etiquetas", subtitle: "Listas tratadas" },
   { key: "customize", title: "Variaveis", subtitle: "Conteudo do envio" },
-  { key: "dispatch", title: "Disparo", subtitle: "Enviar agora" },
+  { key: "dispatch", title: "Transmissao", subtitle: "Montar lote" },
 ];
 
 const defaultRun = {
@@ -306,6 +306,37 @@ function saveCampaigns(campaigns: TransmissionCampaign[]) {
   localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(campaigns.slice(0, 50)));
 }
 
+function campaignFromTransmission(item: Record<string, unknown>): TransmissionCampaign {
+  const totals = asRecord(item.totals);
+  const sender = asRecord(item.sender);
+  const lots = Array.isArray(item.lots) ? item.lots : [];
+  const recipients = Array.isArray(item.recipients) ? item.recipients : [];
+  const status = String(item.status || "prepared").toLowerCase();
+  const senderName = pickString(sender, ["name", "senderName", "label", "apiName"]) || "Infobip";
+  const senderPhone = formatPhone(pickString(sender, ["sender_number", "senderNumber", "phone", "sender"]));
+  const total = Number(totals.contacts || item.total || recipients.length || 0);
+  return {
+    id: String(item.id || `prepared-${item.createdAt || Date.now()}`),
+    name: String(item.campaignName || asRecord(item.campaign).name || item.name || "Transmissao Infobip"),
+    sender: senderPhone ? `${senderName} - ${senderPhone}` : senderName,
+    templates: Number(totals.lots || lots.length || 0),
+    tags: Number(totals.lots || lots.length || 0),
+    total,
+    accepted: Number(item.accepted || 0),
+    delivered: Number(item.delivered || 0),
+    failed: Number(item.failed || 0),
+    status: status === "failed" ? "failed" : status === "done" ? "done" : "prepared",
+    createdAt: String(item.createdAt || item.preparedAt || item.updatedAt || new Date().toISOString()),
+  };
+}
+
+async function loadPreparedCampaigns() {
+  const response = await fetch(`${localBackendUrl()}/infobip/transmissions`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || asRecord(data).ok === false) throw new Error(String(asRecord(data).message || asRecord(data).error || "Nao foi possivel carregar transmissoes Infobip."));
+  return arrayFromResponse(asRecord(data), ["data", "items", "results"]).map((item) => campaignFromTransmission(asRecord(item)));
+}
+
 function arrayFromResponse(record: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = record[key];
@@ -346,9 +377,9 @@ function formatBackendError(error: unknown) {
   return String(record.message || record.error || "Erro desconhecido");
 }
 
-async function dispatchInfobip(payload: Record<string, unknown>) {
+async function prepareInfobipTransmission(payload: Record<string, unknown>) {
   try {
-    const response = await fetch(`${localBackendUrl()}/broadcasts/dispatch`, {
+    const response = await fetch(`${localBackendUrl()}/infobip/transmissions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -370,7 +401,17 @@ async function dispatchInfobip(payload: Record<string, unknown>) {
     }
   }
 
-  return broadcasts.dispatch(payload);
+  const stored = JSON.parse(localStorage.getItem("movy.infobipPreparedPayloads") || "[]");
+  localStorage.setItem("movy.infobipPreparedPayloads", JSON.stringify([payload, ...(Array.isArray(stored) ? stored : [])].slice(0, 50)));
+  return {
+    ok: true,
+    status: "prepared",
+    total: Number(asRecord(payload.totals).contacts || 0),
+    accepted: 0,
+    failed: 0,
+    pending: Number(asRecord(payload.totals).contacts || 0),
+    events: [{ type: "success", message: "Transmissao preparada localmente para montar na Infobip." }],
+  };
 }
 
 export function InfobipTransmissions() {
@@ -449,14 +490,18 @@ export function InfobipTransmissions() {
     setLoading(true);
     setStatus("");
     try {
-      const [senderOptions, templateOptions, tagOptions] = await Promise.all([
+      const [senderOptions, templateOptions, tagOptions, preparedCampaigns] = await Promise.all([
         loadSenders(),
         loadTemplates(),
         loadTags(),
+        loadPreparedCampaigns().catch(() => [] as TransmissionCampaign[]),
       ]);
       setSenders(senderOptions);
       setTemplates(templateOptions);
       setTags(tagOptions);
+      const nextCampaigns = uniqueBy([...preparedCampaigns, ...readCampaigns()], (campaign) => campaign.id);
+      setCampaigns(nextCampaigns);
+      saveCampaigns(nextCampaigns);
       if (!selectedSenderId && senderOptions[0]) setSelectedSenderId(senderOptions[0].id);
     } catch (error) {
       setStatus(formatBackendError(error));
@@ -602,9 +647,9 @@ export function InfobipTransmissions() {
     setStep(steps[activeIndex - 1].key);
   }
 
-  async function handleDispatch() {
-    if (!selectedSender || !expectedMatch || run.status === "sending") return;
-    setRun({ ...defaultRun, status: "sending", total: totalRecipients, pending: totalRecipients, events: [{ id: crypto.randomUUID(), type: "info", message: "Montando transmissao Infobip.", time: nowTime() }] });
+  async function handlePrepareTransmission() {
+    if (!selectedSender || !expectedMatch || run.status === "preparing") return;
+    setRun({ ...defaultRun, status: "preparing", total: totalRecipients, pending: totalRecipients, events: [{ id: crypto.randomUUID(), type: "info", message: "Montando transmissao para a Infobip.", time: nowTime() }] });
     setStatus("");
 
     try {
@@ -686,7 +731,7 @@ export function InfobipTransmissions() {
         provider: "infobip",
         channel: "infobip",
         mode: "infobip_transmission",
-        status: "created",
+        status: "prepared",
         createdAt: new Date().toISOString(),
         campaignName,
         createdBy: "Admin",
@@ -704,22 +749,22 @@ export function InfobipTransmissions() {
         recipients,
       };
 
-      const response = await dispatchInfobip(payload);
+      const response = await prepareInfobipTransmission(payload);
       const record = asRecord(response);
-      const accepted = Number(record.accepted || asRecord(record.data).accepted || recipients.length);
+      const accepted = Number(record.accepted || asRecord(record.data).accepted || 0);
       const failed = Number(record.failed || asRecord(record.data).failed || 0);
-      const pending = Math.max(accepted - failed, 0);
+      const pending = Number(record.pending || asRecord(record.data).pending || recipients.length);
       const events = responseEvents(response);
       const fallbackEvent: RunEvent = {
         id: crypto.randomUUID(),
         type: failed ? "failed" : "success",
-        message: `${accepted} mensagem(ns) enviada(s) para a Infobip.`,
+        message: `Transmissao preparada com ${recipients.length.toLocaleString("pt-BR")} destinatario(s).`,
         time: nowTime(),
       };
       const nextRun = {
         status: failed > 0 ? "failed" as RunStatus : "done" as RunStatus,
         accepted,
-        delivered: accepted - failed,
+        delivered: 0,
         failed,
         pending,
         total: recipients.length,
@@ -737,7 +782,7 @@ export function InfobipTransmissions() {
         accepted,
         delivered: nextRun.delivered,
         failed,
-        status: failed > 0 ? "failed" : "done",
+        status: failed > 0 ? "failed" : "prepared",
         createdAt: new Date().toISOString(),
       };
       const nextCampaigns = [nextCampaign, ...campaigns];
@@ -765,7 +810,7 @@ export function InfobipTransmissions() {
           <div>
             <span className="eyebrow">INFOBIP</span>
             <h1>Transmissoes Infobip</h1>
-            <p>Gerencie lotes, use etiquetas tratadas e dispare modelos pelo canal Infobip.</p>
+            <p>Gerencie lotes, use etiquetas tratadas e prepare transmissoes para o canal Infobip.</p>
           </div>
           <div className="hero-actions">
             <button className="button secondary" type="button" onClick={() => void loadData()}>
@@ -780,7 +825,7 @@ export function InfobipTransmissions() {
         </section>
 
         <section className="infobip-kpis">
-          <Metric label="Enviados" value={dashboardTotals.total} Icon={Send} />
+          <Metric label="Destinatarios" value={dashboardTotals.total} Icon={Send} />
           <Metric label="Entregues" value={dashboardTotals.delivered} Icon={CheckCircle2} tone="success" />
           <Metric label="Falhas" value={dashboardTotals.failed} Icon={XCircle} tone="danger" />
           <Metric label="Lotes" value={dashboardTotals.lots} Icon={Layers3} />
@@ -809,7 +854,9 @@ export function InfobipTransmissions() {
                 <span>{campaign.sender}</span>
                 <span>{campaign.templates}</span>
                 <span>{campaign.tags}</span>
-                <span className={`infobip-status ${campaign.status}`}>{campaign.status === "done" ? "Concluida" : campaign.status}</span>
+                <span className={`infobip-status ${campaign.status}`}>
+                  {campaign.status === "prepared" ? "Preparada" : campaign.status === "done" ? "Concluida" : campaign.status}
+                </span>
                 <span>{formatDate(campaign.createdAt)}</span>
               </div>
             ))
@@ -972,7 +1019,7 @@ export function InfobipTransmissions() {
           ) : null}
 
           {step === "dispatch" ? (
-            <WizardSection icon={<Send size={18} />} title="Disparo" subtitle="Revise e envie a transmissao para a Infobip.">
+            <WizardSection icon={<Send size={18} />} title="Transmissao" subtitle="Revise e prepare o lote para montar na Infobip.">
               <div className="dispatch-summary">
                 <label className="field">
                   <span>Nome da transmissao</span>
@@ -999,7 +1046,7 @@ export function InfobipTransmissions() {
               </div>
               <div className="run-progress-bar">
                 <strong>{run.total ? Math.round(((run.accepted + run.failed) / run.total) * 100) : 0}%</strong>
-                <span>{run.status === "sending" ? "Enviando" : run.status === "failed" ? "Com falhas" : run.status === "done" ? "Concluido" : "Aguardando"}</span>
+                <span>{run.status === "preparing" ? "Preparando" : run.status === "failed" ? "Com falhas" : run.status === "done" ? "Preparada" : "Aguardando"}</span>
                 <div><i style={{ width: `${run.total ? Math.min(100, ((run.accepted + run.failed) / run.total) * 100) : 0}%` }} /></div>
               </div>
               <div className="live-events-card compact">
@@ -1015,7 +1062,7 @@ export function InfobipTransmissions() {
                     </div>
                   ))
                 ) : (
-                  <p className="muted">Clique em disparar para acompanhar o retorno da Infobip.</p>
+                  <p className="muted">Clique em preparar para gerar a transmissao sem disparar mensagens.</p>
                 )}
               </div>
               {status ? <p className="list-status error">{status}</p> : null}
@@ -1029,9 +1076,9 @@ export function InfobipTransmissions() {
             Voltar
           </button>
           {step === "dispatch" ? (
-            <button className="button" type="button" disabled={!canContinue() || run.status === "sending"} onClick={handleDispatch}>
+            <button className="button" type="button" disabled={!canContinue() || run.status === "preparing"} onClick={handlePrepareTransmission}>
               <Send size={16} />
-              {run.status === "sending" ? "Enviando..." : "Disparar agora"}
+              {run.status === "preparing" ? "Preparando..." : "Preparar transmissao"}
             </button>
           ) : (
             <button className="button" type="button" disabled={!canContinue()} onClick={goNext}>

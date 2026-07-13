@@ -42,6 +42,7 @@ const FLOW_RUNTIME_KEY = "movy.flowRuntime";
 const BROADCAST_ANALYTICS_KEY = "movy.broadcastAnalyticsEvents";
 const CONVERSATION_MESSAGES_KEY = "movy.conversationMessages";
 const INFOBIP_APIS_KEY = "movy.infobipApis";
+const INFOBIP_TRANSMISSIONS_KEY = "movy.infobipTransmissions";
 const graphApiBase = "https://graph.facebook.com/v24.0";
 let lastBroadcastDebug = null;
 
@@ -505,6 +506,15 @@ async function writeInfobipApis(items) {
   await setStoredValue(INFOBIP_APIS_KEY, items.map(sanitizeInfobipApi));
 }
 
+async function readInfobipTransmissions() {
+  const stored = await getStoredValue(INFOBIP_TRANSMISSIONS_KEY);
+  return Array.isArray(stored) ? stored.filter((item) => item && typeof item === "object") : [];
+}
+
+async function writeInfobipTransmissions(items) {
+  await setStoredValue(INFOBIP_TRANSMISSIONS_KEY, items.slice(0, 500));
+}
+
 function normalizeInfobipBaseUrl(value) {
   let url = String(value || "").trim();
   if (!url) return "";
@@ -821,6 +831,67 @@ async function handleInfobipApis(request, response) {
   try {
     const url = new URL(request.url || "", `http://${request.headers.host}`);
     const apis = await readInfobipApis();
+    if (request.method === "GET" && url.pathname === "/infobip/transmissions") {
+      const items = await readInfobipTransmissions();
+      sendJson(response, 200, { ok: true, data: items });
+      return true;
+    }
+
+    if (request.method === "POST" && url.pathname === "/infobip/transmissions") {
+      const body = JSON.parse((await readRequestBody(request)).toString("utf8") || "{}");
+      const lots = Array.isArray(body.lots) ? body.lots : [];
+      const recipients = Array.isArray(body.recipients) ? body.recipients : [];
+      if (!lots.length || !recipients.length) {
+        sendJson(response, 400, {
+          ok: false,
+          error: "empty-infobip-transmission",
+          message: "Selecione templates, etiquetas e contatos antes de preparar a transmissao.",
+        });
+        return true;
+      }
+
+      const now = new Date().toISOString();
+      const total = recipients.length;
+      const id = firstNonEmpty(body.id, `infobip-transmission-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+      const item = {
+        ...body,
+        id,
+        provider: "infobip",
+        channel: "infobip",
+        status: "prepared",
+        preparedAt: now,
+        updatedAt: now,
+        createdAt: firstNonEmpty(body.createdAt, now),
+        totals: {
+          ...asRecord(body.totals),
+          contacts: total,
+          lots: lots.length,
+        },
+      };
+      const current = await readInfobipTransmissions();
+      await writeInfobipTransmissions([item, ...current.filter((entry) => String(entry.id || "") !== id)]);
+      sendJson(response, 200, {
+        ok: true,
+        id,
+        data: item,
+        status: "prepared",
+        total,
+        accepted: 0,
+        failed: 0,
+        pending: total,
+        events: lots.map((lot) => {
+          const lotRecord = asRecord(lot);
+          const template = asRecord(lotRecord.template);
+          const tag = asRecord(lotRecord.tag || lotRecord.audience);
+          return {
+            type: "success",
+            message: `${firstNonEmpty(template.name, "Template")} preparado para ${firstNonEmpty(tag.name, tag.tagName, "etiqueta")}.`,
+          };
+        }),
+      });
+      return true;
+    }
+
     const apiMatch = url.pathname.match(/^\/infobip\/apis\/([^/]+)$/);
     const senderMatch = url.pathname.match(/^\/infobip\/apis\/([^/]+)\/senders$/);
     const syncMatch = url.pathname.match(/^\/infobip\/apis\/([^/]+)\/senders\/sync$/);
