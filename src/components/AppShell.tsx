@@ -11,7 +11,6 @@ const PERSISTENT_KEYS = [
   "scaleapi.bmSettings",
   "scaleapi.bmPhoneNumbers",
   "movy.connectedSenders",
-  "movy.mediaLibrary",
 ];
 
 function readLocalJson(key: string) {

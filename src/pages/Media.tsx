@@ -2,6 +2,7 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import { Check, Clipboard, Download, FileAudio, FileImage, FileVideo, Image, Trash2, Upload } from "lucide-react";
 import { config } from "../lib/config";
 import { formatBytes, formatDate, labelOf } from "../lib/format";
+import { media as mediaService } from "../lib/services";
 import type { MediaItem } from "../lib/types";
 
 type LocalMediaItem = MediaItem & {
@@ -48,6 +49,32 @@ function normalizeMediaItem(item: LocalMediaItem): LocalMediaItem {
   };
 }
 
+function mediaItemKey(item: LocalMediaItem, index: number) {
+  return String(mediaUrl(item) || item.public_url || item.url || item.storagePath || item.id || `${item.name || item.file_name || "midia"}-${item.size || 0}-${item.created_at || index}`);
+}
+
+function mergeMediaItems(...groups: LocalMediaItem[][]) {
+  const byKey = new Map<string, LocalMediaItem>();
+  groups.flat().map(normalizeMediaItem).forEach((item, index) => {
+    const key = mediaItemKey(item, index);
+    if (!key) return;
+    byKey.set(key, { ...byKey.get(key), ...item });
+  });
+  return Array.from(byKey.values()).sort((left, right) => {
+    const leftDate = new Date(String(left.created_at || 0)).getTime() || 0;
+    const rightDate = new Date(String(right.created_at || 0)).getTime() || 0;
+    return rightDate - leftDate;
+  });
+}
+
+function readLocalMediaLibrary() {
+  try {
+    return JSON.parse(localStorage.getItem(MEDIA_LIBRARY_KEY) || "[]") as LocalMediaItem[];
+  } catch {
+    return [];
+  }
+}
+
 function mediaKind(type?: string) {
   if (type?.startsWith("image/")) return "image";
   if (type?.startsWith("video/")) return "video";
@@ -92,27 +119,40 @@ async function uploadToLocalBackend(file: File) {
 }
 
 async function readMediaLibrary() {
+  const sources: LocalMediaItem[][] = [];
+
+  await mediaService.normalizedList()
+    .then((value) => {
+      if (Array.isArray(value)) sources.push(value as LocalMediaItem[]);
+    })
+    .catch(() => null);
+
   try {
     const response = await fetch(`${backendUrl()}/storage/${encodeURIComponent(MEDIA_LIBRARY_KEY)}`);
     const payload = await response.json().catch(() => ({}));
     const value = Array.isArray(payload.value) ? payload.value : [];
-    localStorage.setItem(MEDIA_LIBRARY_KEY, JSON.stringify(value));
-    return value as LocalMediaItem[];
+    sources.push(value as LocalMediaItem[]);
   } catch {
-    try {
-      return JSON.parse(localStorage.getItem(MEDIA_LIBRARY_KEY) || "[]") as LocalMediaItem[];
-    } catch {
-      return [];
-    }
+    // Local API can be unavailable in development.
   }
+
+  const localItems = readLocalMediaLibrary();
+  if (localItems.length) sources.push(localItems);
+
+  const merged = mergeMediaItems(...sources);
+  if (merged.length || localItems.length) {
+    await writeMediaLibrary(merged);
+  }
+  return merged;
 }
 
 async function writeMediaLibrary(value: LocalMediaItem[]) {
-  localStorage.setItem(MEDIA_LIBRARY_KEY, JSON.stringify(value));
+  const normalized = mergeMediaItems(value);
+  localStorage.setItem(MEDIA_LIBRARY_KEY, JSON.stringify(normalized));
   await fetch(`${backendUrl()}/storage/${encodeURIComponent(MEDIA_LIBRARY_KEY)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ value }),
+    body: JSON.stringify({ value: normalized }),
   }).catch(() => null);
 }
 
