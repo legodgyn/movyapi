@@ -14,6 +14,7 @@ import { Contacts } from "./pages/Contacts";
 import { Conversations } from "./pages/Conversations";
 import { EmbeddedSignup } from "./pages/EmbeddedSignup";
 import { Flows } from "./pages/Flows";
+import { InfobipTransmissions } from "./pages/InfobipTransmissions";
 import { ListTools } from "./pages/ListTools";
 import { Login } from "./pages/Login";
 import { Media } from "./pages/Media";
@@ -48,6 +49,7 @@ export function App() {
         <Route path="/" element={<TemplateCreator />} />
         <Route path="/broadcast" element={<Broadcast mode="simple" />} />
         <Route path="/broadcast-random" element={<Broadcast mode="random" />} />
+        <Route path="/infobip-transmissions" element={<InfobipTransmissions />} />
         <Route path="/conversations" element={<Conversations />} />
         <Route path="/contatos" element={<Contacts />} />
         <Route path="/flows" element={<Flows provider="meta" />} />

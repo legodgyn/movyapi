@@ -46,6 +46,10 @@ const titles: Record<string, { title: string; description: string }> = {
     title: "Broadcast Randomico",
     description: "Alterne remetentes e templates automaticamente contato a contato",
   },
+  "/infobip-transmissions": {
+    title: "Transmissoes Infobip",
+    description: "Crie lotes pelo canal Infobip usando etiquetas tratadas",
+  },
   "/conversations": {
     title: "Conversas",
     description: "Inbox por remetente com respostas e status do webhook",

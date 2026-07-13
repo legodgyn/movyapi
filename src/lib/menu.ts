@@ -30,6 +30,7 @@ export const menuSections = [
       { label: "Retentativas", path: "/retries", icon: RefreshCcw },
       { label: "Broadcast Simples", path: "/broadcast", icon: Megaphone },
       { label: "Broadcast Randomico", path: "/broadcast-random", icon: Megaphone },
+      { label: "Transmissoes Infobip", path: "/infobip-transmissions", icon: Megaphone },
       { label: "Conversas", path: "/conversations", icon: MessageCircle },
       { label: "Flow META", path: "/flows", icon: Workflow },
       { label: "Flow Infobip", path: "/flows-infobip", icon: Workflow },

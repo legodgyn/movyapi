@@ -1289,6 +1289,27 @@ function TreatListPage() {
     setStatus(`${finalRows.length.toLocaleString("pt-BR")} contato(s) distribuidos em ${labels} etiqueta(s). CSV final pronto.`);
   }
 
+  async function publishActivatedRows() {
+    if (!taggedActivatedRows.length || !activatedDownload) {
+      setStatus("Gere o CSV final com etiquetas antes de subir para transmissoes.");
+      return;
+    }
+
+    setStatus("Publicando etiquetas para as transmissoes...");
+    try {
+      const result = await publishRowsToContactsApi(taggedActivatedRows, activatedDownload.filename);
+      publishRowsToContacts(taggedActivatedRows);
+      setStatus(
+        `${result.contacts.toLocaleString("pt-BR")} contato(s) publicados no banco em ${result.tags} etiqueta(s). Disponivel para Meta e Infobip.`,
+      );
+    } catch {
+      const result = publishRowsToContacts(taggedActivatedRows);
+      setStatus(
+        `API indisponivel. Publiquei localmente ${result.contacts.toLocaleString("pt-BR")} contato(s) em ${result.tags} etiqueta(s) para Meta e Infobip.`,
+      );
+    }
+  }
+
   return (
     <main className="template-page list-cleaner-page treat-list-page">
       <div className="template-heading">
@@ -1612,13 +1633,10 @@ function TreatListPage() {
               <button
                 className="button secondary"
                 type="button"
-                onClick={() => {
-                  const result = publishRowsToContacts(taggedActivatedRows);
-                  setStatus(`${result.contacts.toLocaleString("pt-BR")} contato(s) publicados em ${result.tags} etiqueta(s).`);
-                }}
+                onClick={publishActivatedRows}
               >
                 <Upload size={17} />
-                Subir para Broadcast
+                Subir para Transmissoes
               </button>
             </div>
           </div>
@@ -1831,17 +1849,18 @@ function RetryPage() {
   }
   async function publishRetryRows() {
     if (!retryRows.length || !download) {
-      setStatus("Gere as retentativas antes de subir para o Broadcast.");
+      setStatus("Gere as retentativas antes de subir para transmissoes.");
       return;
     }
 
-    setStatus("Subindo retentativas para o Broadcast...");
+    setStatus("Subindo retentativas para transmissoes...");
     try {
       const result = await publishRowsToContactsApi(retryRows, download.filename);
-      setStatus(`${result.contacts.toLocaleString("pt-BR")} contato(s) publicados no banco em ${result.tags} etiqueta(s).`);
+      publishRowsToContacts(retryRows);
+      setStatus(`${result.contacts.toLocaleString("pt-BR")} contato(s) publicados no banco em ${result.tags} etiqueta(s). Disponivel para Meta e Infobip.`);
     } catch {
       const result = publishRowsToContacts(retryRows);
-      setStatus(`API indisponivel. Publiquei localmente ${result.contacts.toLocaleString("pt-BR")} contato(s) em ${result.tags} etiqueta(s).`);
+      setStatus(`API indisponivel. Publiquei localmente ${result.contacts.toLocaleString("pt-BR")} contato(s) em ${result.tags} etiqueta(s) para Meta e Infobip.`);
     }
   }
 
@@ -2136,7 +2155,7 @@ function RetryPage() {
             </button>
             <button className="button secondary process-list-button" onClick={publishRetryRows} type="button">
               <Cloud size={17} />
-              Subir para Broadcast
+              Subir para Transmissoes
             </button>
             <button
               className="button secondary process-list-button"
@@ -2173,7 +2192,7 @@ function RetryPage() {
               <span className="retry-success-pill">Pronto para download</span>
               <button className="button secondary" onClick={publishRetryRows} type="button">
                 <Cloud size={16} />
-                Subir para Broadcast
+                Subir para Transmissoes
               </button>
             </div>
           </div>
