@@ -1,4 +1,4 @@
-import { CheckCircle2, KeyRound, Link2, Plus, RefreshCw, Save, Search, Server, Smartphone, Trash2, Wifi } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, KeyRound, Link2, Plus, RefreshCw, Save, Search, Server, Smartphone, Trash2, Wifi } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { labelOf } from "../lib/format";
 import { infobipApis } from "../lib/services";
@@ -32,6 +32,7 @@ const emptyForm: ApiForm = {
   senderNumber: "",
 };
 const LOCAL_INFOBIP_SENDERS_KEY = "movy.infobipSenders";
+const SENDER_PAGE_SIZE = 24;
 
 function apiValue(api: InfobipApi, ...keys: string[]) {
   for (const key of keys) {
@@ -102,6 +103,20 @@ function writeIntegratedSenders(items: InfobipSender[]) {
   localStorage.setItem(LOCAL_INFOBIP_SENDERS_KEY, JSON.stringify(items));
 }
 
+function senderLabel(sender: InfobipSender) {
+  const number = sender.sender || "Sem numero";
+  const name = (sender.name || "").trim();
+  if (!name || name === sender.sender) return number;
+  return `${name} - ${number}`;
+}
+
+function formatSyncDate(value: unknown) {
+  if (!value) return "";
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("pt-BR", { day: "2-digit", hour: "2-digit", minute: "2-digit", month: "2-digit" });
+}
+
 export function ApiManager() {
   const [apis, setApis] = useState<InfobipApi[]>([]);
   const [form, setForm] = useState<ApiForm>(emptyForm);
@@ -111,6 +126,8 @@ export function ApiManager() {
   const [syncingApiId, setSyncingApiId] = useState("");
   const [senderOptions, setSenderOptions] = useState<Record<string, InfobipSender[]>>({});
   const [senderFilters, setSenderFilters] = useState<Record<string, string>>({});
+  const [expandedApis, setExpandedApis] = useState<Record<string, boolean>>({});
+  const [senderLimits, setSenderLimits] = useState<Record<string, number>>({});
   const [integratedSenders, setIntegratedSenders] = useState<InfobipSender[]>(() => readIntegratedSenders());
 
   const filteredApis = useMemo(() => {
@@ -191,6 +208,8 @@ export function ApiManager() {
 
   async function syncSenders(api: InfobipApi) {
     setSyncingApiId(api.id);
+    setExpandedApis((current) => ({ ...current, [api.id]: true }));
+    setSenderLimits((current) => ({ ...current, [api.id]: SENDER_PAGE_SIZE }));
     setStatus(`Buscando remetentes de ${labelOf(api, "Infobip")}...`);
     const cachedOptions = cachedSendersFromApi(api);
     if (cachedOptions.length) {
@@ -321,12 +340,17 @@ export function ApiManager() {
               const cachedOptions = cachedSendersFromApi(api);
               const options = senderOptions[api.id] || cachedOptions;
               const senderFilter = senderFilters[api.id] || "";
+              const isExpanded = Boolean(expandedApis[api.id]);
+              const senderLimit = senderLimits[api.id] || SENDER_PAGE_SIZE;
               const senderSearch = senderFilter.trim().toLowerCase();
               const visibleOptions = options.filter((option) => {
                 const haystack = `${option.name} ${option.sender} ${option.status} ${option.channel || ""}`.toLowerCase();
                 return !senderSearch || haystack.includes(senderSearch);
               });
+              const pagedOptions = visibleOptions.slice(0, senderLimit);
+              const remainingOptions = Math.max(visibleOptions.length - pagedOptions.length, 0);
               const connected = integratedSenders.filter((item) => item.apiId === api.id);
+              const lastSync = formatSyncDate(api.last_sync_at || api.lastSyncAt);
               return (
                 <article className="api-connection-card" key={api.id}>
                   <div className="api-connection-main">
@@ -340,15 +364,31 @@ export function ApiManager() {
                     <span><CheckCircle2 size={14} /> {baseUrl || "Base URL não informada"}</span>
                     <span><KeyRound size={14} /> {tokenPreview(token)}</span>
                   </div>
+                  <div className="api-connection-summary">
+                    <span><Smartphone size={13} /> {options.length} encontrado(s)</span>
+                    <span><Link2 size={13} /> {connected.length} integrado(s)</span>
+                    <span><RefreshCw size={13} /> {lastSync ? `Sync ${lastSync}` : "Sem sync recente"}</span>
+                  </div>
                   {api.last_sync_error ? <p className="hint">Ultima sincronizacao: {String(api.last_sync_error)}</p> : null}
                   <div className="button-row">
                     <button className="button secondary compact" type="button" onClick={() => edit(api)}>Editar</button>
                     <button className="button secondary compact" disabled={syncingApiId === api.id} type="button" onClick={() => syncSenders(api)}>
                       {syncingApiId === api.id ? <RefreshCw className="spin" size={14} /> : <Smartphone size={14} />} Buscar remetentes
                     </button>
+                    {options.length ? (
+                      <button className="button secondary compact" type="button" onClick={() => setExpandedApis((current) => ({ ...current, [api.id]: !isExpanded }))}>
+                        {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} {isExpanded ? "Ocultar lista" : `Ver ${options.length} remetente(s)`}
+                      </button>
+                    ) : null}
                     <button className="button secondary compact" type="button" onClick={() => remove(api)}><Trash2 size={14} /> Remover</button>
                   </div>
-                  {options.length ? (
+                  {options.length && !isExpanded ? (
+                    <div className="api-sender-collapsed">
+                      <Smartphone size={16} />
+                      <span>{options.length} remetente(s) carregado(s). Abra a lista para filtrar e escolher quais integrar.</span>
+                    </div>
+                  ) : null}
+                  {options.length && isExpanded ? (
                     <div className="api-sender-picker">
                       <div className="api-sender-picker-head">
                         <strong>Remetentes encontrados na Infobip</strong>
@@ -362,21 +402,31 @@ export function ApiManager() {
                           onChange={(event) => setSenderFilters((current) => ({ ...current, [api.id]: event.target.value }))}
                         />
                       </label>
-                      {visibleOptions.map((option) => {
-                        const isIntegrated = integratedSenders.some((item) => item.id === option.id);
-                        return (
-                          <div className="api-sender-row" key={option.id}>
-                            <span className="api-connection-icon"><Smartphone size={16} /></span>
-                            <div>
-                              <strong>{option.name}</strong>
-                              <span>{option.sender || "Sender sem numero"} - {option.status}</span>
+                      <div className="api-sender-scroll">
+                        {pagedOptions.map((option) => {
+                          const isIntegrated = integratedSenders.some((item) => item.id === option.id);
+                          return (
+                            <div className="api-sender-row" key={option.id}>
+                              <span className="api-connection-icon"><Smartphone size={16} /></span>
+                              <div>
+                                <strong>{senderLabel(option)}</strong>
+                                <span>{option.channel || "WhatsApp"} - {option.status}</span>
+                              </div>
+                              <button className="button compact" disabled={isIntegrated} type="button" onClick={() => integrateSender(option)}>
+                                <Link2 size={14} /> {isIntegrated ? "Integrado" : "Integrar"}
+                              </button>
                             </div>
-                            <button className="button compact" disabled={isIntegrated} type="button" onClick={() => integrateSender(option)}>
-                              <Link2 size={14} /> {isIntegrated ? "Sincronizado" : "Sincronizar no sistema"}
-                            </button>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
+                      {remainingOptions ? (
+                        <div className="api-sender-footer">
+                          <span>{remainingOptions} remetente(s) oculto(s). Filtre ou carregue mais resultados.</span>
+                          <button className="button secondary compact" type="button" onClick={() => setSenderLimits((current) => ({ ...current, [api.id]: senderLimit + SENDER_PAGE_SIZE }))}>
+                            Mostrar mais {Math.min(SENDER_PAGE_SIZE, remainingOptions)}
+                          </button>
+                        </div>
+                      ) : null}
                       {!visibleOptions.length ? (
                         <div className="api-sender-empty">
                           Nenhum remetente bate com esse filtro.
@@ -387,16 +437,18 @@ export function ApiManager() {
                   {connected.length ? (
                     <div className="api-integrated-list">
                       <strong>Integrados no Movy</strong>
-                      {connected.map((item) => (
-                        <div className="api-sender-row integrated" key={item.id}>
-                          <span className="api-connection-icon"><CheckCircle2 size={16} /></span>
-                          <div>
-                            <strong>{item.name}</strong>
-                            <span>{item.sender} - pronto para Templates</span>
+                      <div className="api-integrated-scroll">
+                        {connected.map((item) => (
+                          <div className="api-sender-row integrated" key={item.id}>
+                            <span className="api-connection-icon"><CheckCircle2 size={16} /></span>
+                            <div>
+                              <strong>{senderLabel(item)}</strong>
+                              <span>{item.apiName} - pronto para Templates</span>
+                            </div>
+                            <button className="button secondary compact" type="button" onClick={() => removeIntegratedSender(item)}>Remover</button>
                           </div>
-                          <button className="button secondary compact" type="button" onClick={() => removeIntegratedSender(item)}>Remover</button>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
                   ) : null}
                 </article>
