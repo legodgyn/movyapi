@@ -25,7 +25,7 @@ import type { ContactItem, ContactTag, InfobipApi, SavedTemplate } from "../lib/
 
 type StepKey = "sender" | "templates" | "tags" | "customize" | "dispatch";
 type ViewMode = "dashboard" | "wizard";
-type RunStatus = "idle" | "preparing" | "done" | "failed";
+type RunStatus = "idle" | "sending" | "done" | "failed";
 
 type SenderOption = {
   id: string;
@@ -67,7 +67,7 @@ type TransmissionCampaign = {
   accepted: number;
   delivered: number;
   failed: number;
-  status: "draft" | "prepared" | "done" | "failed";
+  status: "draft" | "prepared" | "done" | "partial" | "failed";
   createdAt: string;
 };
 
@@ -80,7 +80,7 @@ const steps: Array<{ key: StepKey; title: string; subtitle: string }> = [
   { key: "templates", title: "Templates", subtitle: "Modelos enviados" },
   { key: "tags", title: "Etiquetas", subtitle: "Listas tratadas" },
   { key: "customize", title: "Variaveis", subtitle: "Conteudo do envio" },
-  { key: "dispatch", title: "Transmissao", subtitle: "Montar lote" },
+  { key: "dispatch", title: "Transmissao", subtitle: "Enviar lote" },
 ];
 
 const defaultRun = {
@@ -325,7 +325,7 @@ function campaignFromTransmission(item: Record<string, unknown>): TransmissionCa
     accepted: Number(item.accepted || 0),
     delivered: Number(item.delivered || 0),
     failed: Number(item.failed || 0),
-    status: status === "failed" ? "failed" : status === "done" ? "done" : "prepared",
+    status: status === "failed" ? "failed" : status === "partial" ? "partial" : status === "done" ? "done" : "prepared",
     createdAt: String(item.createdAt || item.preparedAt || item.updatedAt || new Date().toISOString()),
   };
 }
@@ -378,40 +378,22 @@ function formatBackendError(error: unknown) {
 }
 
 async function prepareInfobipTransmission(payload: Record<string, unknown>) {
-  try {
-    const response = await fetch(`${localBackendUrl()}/infobip/transmissions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || asRecord(data).ok === false) {
-      const record = asRecord(data);
-      const details = arrayFromResponse(record, ["events", "results"])
-        .map((item) => String(asRecord(item).message || asRecord(item).errorMessage || asRecord(item).error || ""))
-        .filter(Boolean)
-        .slice(0, 3)
-        .join(" | ");
-      throw new Error(String(record.message || record.error || details || `servidor local HTTP ${response.status}`));
-    }
-    return data;
-  } catch (localError) {
-    if (localError instanceof Error && !/Failed to fetch|NetworkError|Network Error/i.test(localError.message)) {
-      throw localError;
-    }
+  const response = await fetch(`${localBackendUrl()}/infobip/transmissions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, dispatch: true }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const record = asRecord(data);
+    const details = arrayFromResponse(record, ["events", "results"])
+      .map((item) => String(asRecord(item).message || asRecord(item).errorMessage || asRecord(item).error || ""))
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(" | ");
+    throw new Error(String(record.message || record.error || details || `servidor local HTTP ${response.status}`));
   }
-
-  const stored = JSON.parse(localStorage.getItem("movy.infobipPreparedPayloads") || "[]");
-  localStorage.setItem("movy.infobipPreparedPayloads", JSON.stringify([payload, ...(Array.isArray(stored) ? stored : [])].slice(0, 50)));
-  return {
-    ok: true,
-    status: "prepared",
-    total: Number(asRecord(payload.totals).contacts || 0),
-    accepted: 0,
-    failed: 0,
-    pending: Number(asRecord(payload.totals).contacts || 0),
-    events: [{ type: "success", message: "Transmissao preparada localmente para montar na Infobip." }],
-  };
+  return data;
 }
 
 export function InfobipTransmissions() {
@@ -648,8 +630,8 @@ export function InfobipTransmissions() {
   }
 
   async function handlePrepareTransmission() {
-    if (!selectedSender || !expectedMatch || run.status === "preparing") return;
-    setRun({ ...defaultRun, status: "preparing", total: totalRecipients, pending: totalRecipients, events: [{ id: crypto.randomUUID(), type: "info", message: "Montando transmissao para a Infobip.", time: nowTime() }] });
+    if (!selectedSender || !expectedMatch || run.status === "sending") return;
+    setRun({ ...defaultRun, status: "sending", total: totalRecipients, pending: totalRecipients, events: [{ id: crypto.randomUUID(), type: "info", message: "Enviando transmissao pela Infobip.", time: nowTime() }] });
     setStatus("");
 
     try {
@@ -731,7 +713,7 @@ export function InfobipTransmissions() {
         provider: "infobip",
         channel: "infobip",
         mode: "infobip_transmission",
-        status: "prepared",
+        status: "sending",
         createdAt: new Date().toISOString(),
         campaignName,
         createdBy: "Admin",
@@ -758,7 +740,7 @@ export function InfobipTransmissions() {
       const fallbackEvent: RunEvent = {
         id: crypto.randomUUID(),
         type: failed ? "failed" : "success",
-        message: `Transmissao preparada com ${recipients.length.toLocaleString("pt-BR")} destinatario(s).`,
+        message: `Transmissao enviada para a Infobip com ${recipients.length.toLocaleString("pt-BR")} destinatario(s).`,
         time: nowTime(),
       };
       const nextRun = {
@@ -782,7 +764,7 @@ export function InfobipTransmissions() {
         accepted,
         delivered: nextRun.delivered,
         failed,
-        status: failed > 0 ? "failed" : "prepared",
+        status: failed > 0 && accepted > 0 ? "partial" : failed > 0 ? "failed" : "done",
         createdAt: new Date().toISOString(),
       };
       const nextCampaigns = [nextCampaign, ...campaigns];
@@ -810,7 +792,7 @@ export function InfobipTransmissions() {
           <div>
             <span className="eyebrow">INFOBIP</span>
             <h1>Transmissoes Infobip</h1>
-            <p>Gerencie lotes, use etiquetas tratadas e prepare transmissoes para o canal Infobip.</p>
+            <p>Gerencie lotes, use etiquetas tratadas e envie transmissoes pelo canal Infobip.</p>
           </div>
           <div className="hero-actions">
             <button className="button secondary" type="button" onClick={() => void loadData()}>
@@ -855,7 +837,7 @@ export function InfobipTransmissions() {
                 <span>{campaign.templates}</span>
                 <span>{campaign.tags}</span>
                 <span className={`infobip-status ${campaign.status}`}>
-                  {campaign.status === "prepared" ? "Preparada" : campaign.status === "done" ? "Concluida" : campaign.status}
+                  {campaign.status === "prepared" ? "Preparada" : campaign.status === "done" ? "Enviada" : campaign.status === "partial" ? "Parcial" : campaign.status}
                 </span>
                 <span>{formatDate(campaign.createdAt)}</span>
               </div>
@@ -1019,7 +1001,7 @@ export function InfobipTransmissions() {
           ) : null}
 
           {step === "dispatch" ? (
-            <WizardSection icon={<Send size={18} />} title="Transmissao" subtitle="Revise e prepare o lote para montar na Infobip.">
+            <WizardSection icon={<Send size={18} />} title="Transmissao" subtitle="Revise e envie o lote pela Infobip.">
               <div className="dispatch-summary">
                 <label className="field">
                   <span>Nome da transmissao</span>
@@ -1046,7 +1028,7 @@ export function InfobipTransmissions() {
               </div>
               <div className="run-progress-bar">
                 <strong>{run.total ? Math.round(((run.accepted + run.failed) / run.total) * 100) : 0}%</strong>
-                <span>{run.status === "preparing" ? "Preparando" : run.status === "failed" ? "Com falhas" : run.status === "done" ? "Preparada" : "Aguardando"}</span>
+                <span>{run.status === "sending" ? "Enviando" : run.status === "failed" ? "Com falhas" : run.status === "done" ? "Enviada" : "Aguardando"}</span>
                 <div><i style={{ width: `${run.total ? Math.min(100, ((run.accepted + run.failed) / run.total) * 100) : 0}%` }} /></div>
               </div>
               <div className="live-events-card compact">
@@ -1062,7 +1044,7 @@ export function InfobipTransmissions() {
                     </div>
                   ))
                 ) : (
-                  <p className="muted">Clique em preparar para gerar a transmissao sem disparar mensagens.</p>
+                  <p className="muted">Clique em enviar para criar a transmissao e disparar pelo canal Infobip.</p>
                 )}
               </div>
               {status ? <p className="list-status error">{status}</p> : null}
@@ -1076,9 +1058,9 @@ export function InfobipTransmissions() {
             Voltar
           </button>
           {step === "dispatch" ? (
-            <button className="button" type="button" disabled={!canContinue() || run.status === "preparing"} onClick={handlePrepareTransmission}>
+            <button className="button" type="button" disabled={!canContinue() || run.status === "sending"} onClick={handlePrepareTransmission}>
               <Send size={16} />
-              {run.status === "preparing" ? "Preparando..." : "Preparar transmissao"}
+              {run.status === "sending" ? "Enviando..." : "Enviar para Infobip"}
             </button>
           ) : (
             <button className="button" type="button" disabled={!canContinue()} onClick={goNext}>

@@ -56,6 +56,34 @@ function sendJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload));
 }
 
+function createJsonCaptureResponse() {
+  const capture = {
+    statusCode: 200,
+    raw: "",
+    payload: {},
+    response: {
+      writeHead(statusCode) {
+        capture.statusCode = Number(statusCode || 200);
+      },
+      setHeader() {},
+      write(chunk) {
+        capture.raw += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk || "");
+      },
+      end(chunk) {
+        if (chunk !== undefined && chunk !== null) {
+          capture.raw += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+        }
+        try {
+          capture.payload = capture.raw ? JSON.parse(capture.raw) : {};
+        } catch {
+          capture.payload = { raw: capture.raw };
+        }
+      },
+    },
+  };
+  return capture;
+}
+
 function setCors(response, contentType = "application/json; charset=utf-8") {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Headers", "content-type,x-api-key");
@@ -845,7 +873,7 @@ async function handleInfobipApis(request, response) {
         sendJson(response, 400, {
           ok: false,
           error: "empty-infobip-transmission",
-          message: "Selecione templates, etiquetas e contatos antes de preparar a transmissao.",
+          message: "Selecione templates, etiquetas e contatos antes de enviar a transmissao.",
         });
         return true;
       }
@@ -853,13 +881,13 @@ async function handleInfobipApis(request, response) {
       const now = new Date().toISOString();
       const total = recipients.length;
       const id = firstNonEmpty(body.id, `infobip-transmission-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-      const item = {
+      const baseItem = {
         ...body,
         id,
         provider: "infobip",
         channel: "infobip",
-        status: "prepared",
-        preparedAt: now,
+        status: "sending",
+        dispatchMode: "infobip_transmission",
         updatedAt: now,
         createdAt: firstNonEmpty(body.createdAt, now),
         totals: {
@@ -868,26 +896,70 @@ async function handleInfobipApis(request, response) {
           lots: lots.length,
         },
       };
+
+      if (body.prepareOnly === true || body.dispatch === false) {
+        const item = {
+          ...baseItem,
+          status: "prepared",
+          preparedAt: now,
+        };
+        const current = await readInfobipTransmissions();
+        await writeInfobipTransmissions([item, ...current.filter((entry) => String(entry.id || "") !== id)]);
+        sendJson(response, 200, {
+          ok: true,
+          id,
+          data: item,
+          status: "prepared",
+          total,
+          accepted: 0,
+          failed: 0,
+          pending: total,
+          events: lots.map((lot) => {
+            const lotRecord = asRecord(lot);
+            const template = asRecord(lotRecord.template);
+            const tag = asRecord(lotRecord.tag || lotRecord.audience);
+            return {
+              type: "success",
+              message: `${firstNonEmpty(template.name, "Template")} preparado para ${firstNonEmpty(tag.name, tag.tagName, "etiqueta")}.`,
+            };
+          }),
+        });
+        return true;
+      }
+
+      const capture = createJsonCaptureResponse();
+      await dispatchInfobipBroadcast(baseItem, capture.response);
+      const dispatchResult = asRecord(capture.payload);
+      const accepted = Number(dispatchResult.accepted || 0);
+      const failed = Number(dispatchResult.failed || 0);
+      const pending = Number(dispatchResult.pending || Math.max(total - accepted - failed, 0));
+      const status = !dispatchResult.ok || failed > 0 ? (accepted > 0 ? "partial" : "failed") : "done";
+      const item = {
+        ...baseItem,
+        status,
+        sentAt: now,
+        updatedAt: new Date().toISOString(),
+        accepted,
+        delivered: Number(dispatchResult.delivered || 0),
+        failed,
+        pending,
+        messageIds: Array.isArray(dispatchResult.messageIds) ? dispatchResult.messageIds : [],
+        results: Array.isArray(dispatchResult.results) ? dispatchResult.results.slice(0, 500) : [],
+        events: Array.isArray(dispatchResult.events) ? dispatchResult.events.slice(0, 200) : [],
+        dispatchResponse: dispatchResult,
+      };
       const current = await readInfobipTransmissions();
       await writeInfobipTransmissions([item, ...current.filter((entry) => String(entry.id || "") !== id)]);
       sendJson(response, 200, {
-        ok: true,
+        ...dispatchResult,
+        ok: Boolean(dispatchResult.ok),
         id,
         data: item,
-        status: "prepared",
+        status,
         total,
-        accepted: 0,
-        failed: 0,
-        pending: total,
-        events: lots.map((lot) => {
-          const lotRecord = asRecord(lot);
-          const template = asRecord(lotRecord.template);
-          const tag = asRecord(lotRecord.tag || lotRecord.audience);
-          return {
-            type: "success",
-            message: `${firstNonEmpty(template.name, "Template")} preparado para ${firstNonEmpty(tag.name, tag.tagName, "etiqueta")}.`,
-          };
-        }),
+        accepted,
+        failed,
+        pending,
       });
       return true;
     }
