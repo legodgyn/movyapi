@@ -1457,7 +1457,7 @@ async function canReplyWithFreeText(contactPhone, phoneNumberId) {
 }
 
 async function listConversations(params = {}) {
-  const messages = await readConversationMessages();
+  const messages = (await readConversationMessages()).map(hydrateInfobipConversationMessage);
   const providerFilter = String(params.provider || "").trim().toLowerCase();
   const storedConnected = await getStoredValue("movy.connectedSenders");
   const storedAccounts = await getStoredValue("scaleapi.bmAccounts");
@@ -2741,22 +2741,67 @@ function normalizeInfobipStatuses(payload) {
     .filter((status) => status.id);
 }
 
+function primitiveText(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
 function infobipInboundText(message) {
   const record = asRecord(message);
   const content = asRecord(record.content);
+  const messageRecord = asRecord(record.message);
+  const messageContent = asRecord(messageRecord.content);
   const text = asRecord(record.text);
   const button = asRecord(record.button);
+  const interactive = asRecord(record.interactive);
+  const buttonReply = asRecord(interactive.button_reply);
+  const listReply = asRecord(interactive.list_reply);
+  const payload = asRecord(record.payload);
   return firstNonEmpty(
     content.text,
+    content.body,
+    content.caption,
+    messageContent.text,
+    messageContent.body,
+    messageContent.caption,
+    messageRecord.text,
+    messageRecord.body,
+    messageRecord.caption,
     text.body,
     text.text,
-    record.text,
+    primitiveText(record.text),
+    primitiveText(record.body),
+    primitiveText(record.message),
+    payload.text,
+    payload.body,
+    payload.title,
     button.text,
     button.title,
+    button.payload,
+    buttonReply.title,
+    buttonReply.id,
+    listReply.title,
+    listReply.id,
+    asRecord(record.reply).text,
+    asRecord(record.reply).title,
+    asRecord(record.reply).payload,
     asRecord(record.image).caption,
     asRecord(record.video).caption,
+    asRecord(record.document).caption,
+    asRecord(record.audio).caption,
+    asRecord(record.media).caption,
     String(record.type || "") ? `[${record.type}]` : "Mensagem recebida",
   );
+}
+
+function hydrateInfobipConversationMessage(message) {
+  const record = asRecord(message);
+  if (String(record.provider || "").toLowerCase() !== "infobip" || record.direction !== "inbound") return record;
+  const parsedText = infobipInboundText(record.raw || record);
+  if (!parsedText || parsedText === "Mensagem recebida" || parsedText === String(record.text || "")) return record;
+  if (firstNonEmpty(record.text) && record.text !== "Mensagem recebida") return record;
+  return { ...record, text: parsedText };
 }
 
 function normalizeInfobipIncomingMessages(payload) {
