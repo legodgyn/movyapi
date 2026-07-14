@@ -285,7 +285,7 @@ export function Conversations({ provider = "meta" }: ConversationsProps) {
       let next = Array.isArray(nextPayload.conversations) ? nextPayload.conversations : [];
       let nextSenders = mergeProviderSenderOptions(nextPayload.senders, next, !isInfobip);
       const fallbackBackendUrl = productionBackendUrl();
-      if (!next.length && (isLocalHost() || primaryBackendUrl !== fallbackBackendUrl)) {
+      if ((!next.length || !nextSenders.length) && (isLocalHost() || primaryBackendUrl !== fallbackBackendUrl)) {
         const fallbackUrl = new URL(`${productionBackendUrl()}/${listPath}`);
         fallbackUrl.searchParams.set("_", String(Date.now()));
         if (query.trim()) fallbackUrl.searchParams.set("q", query.trim());
