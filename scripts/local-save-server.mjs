@@ -1470,16 +1470,9 @@ async function listConversations(params = {}) {
   ].filter((item) => item && typeof item === "object");
   const query = String(params.q || "").trim().toLowerCase();
   const sender = String(params.sender || "").trim();
-  const filtered = messages.filter((message) => {
-    const haystack = [message.contactPhone, message.senderPhone, message.senderName, message.text, message.status].join(" ").toLowerCase();
-    const senderOk = !sender || sender === "all" || String(message.senderPhoneNumberId || "") === sender;
-    const providerOk = !providerFilter || String(message.provider || "meta").toLowerCase() === providerFilter;
-    return providerOk && senderOk && (!query || haystack.includes(query));
-  });
-  const conversations = conversationFromMessages(filtered);
   const infobipSenderRows = infobipApis.flatMap((api) => {
     const integrated = Array.isArray(api.integrated_senders) ? api.integrated_senders : [];
-    const rows = integrated
+    return integrated
       .map((sender) => {
         const senderNumber = onlyDigits(firstNonEmpty(sender.sender, sender.senderNumber, sender.sender_number, sender.phone, sender.number));
         if (!senderNumber) return null;
@@ -1493,19 +1486,17 @@ async function listConversations(params = {}) {
         ];
       })
       .filter(Boolean);
-    const fallbackSender = onlyDigits(firstNonEmpty(api.sender_number, api.senderNumber, api.phone_number));
-    if (fallbackSender && !rows.some(([id]) => String(id) === fallbackSender)) {
-      rows.push([
-        fallbackSender,
-        {
-          id: fallbackSender,
-          name: firstNonEmpty(api.sender_name, api.name, api.label, "Infobip"),
-          phone: fallbackSender,
-        },
-      ]);
-    }
-    return rows;
   });
+  const infobipIntegratedIds = new Set(infobipSenderRows.map(([id]) => String(id)));
+  const filtered = messages.filter((message) => {
+    const messageSenderId = onlyDigits(message.senderPhoneNumberId || message.senderPhone || "");
+    const haystack = [message.contactPhone, message.senderPhone, message.senderName, message.text, message.status].join(" ").toLowerCase();
+    const senderOk = !sender || sender === "all" || String(message.senderPhoneNumberId || "") === sender || messageSenderId === sender;
+    const providerOk = !providerFilter || String(message.provider || "meta").toLowerCase() === providerFilter;
+    const infobipIntegratedOk = providerFilter !== "infobip" || (messageSenderId && infobipIntegratedIds.has(messageSenderId));
+    return providerOk && senderOk && infobipIntegratedOk && (!query || haystack.includes(query));
+  });
+  const conversations = conversationFromMessages(filtered);
   const accountSenders = providerFilter === "infobip" ? [] : accounts.flatMap((account, accountIndex) => {
     const bmName = firstNonEmpty(account.name, account.businessName, account.label, `BM ${accountIndex + 1}`);
     const wabaId = String(account.defaultWabaId || account.wabaId || "");
@@ -1542,7 +1533,10 @@ async function listConversations(params = {}) {
       },
     ])),
     ...messages
-      .filter((message) => message.senderPhoneNumberId && (!providerFilter || String(message.provider || "meta").toLowerCase() === providerFilter))
+      .filter((message) => {
+        if (providerFilter === "infobip") return false;
+        return message.senderPhoneNumberId && (!providerFilter || String(message.provider || "meta").toLowerCase() === providerFilter);
+      })
       .map((message) => [
         String(message.senderPhoneNumberId),
         {
@@ -1614,8 +1608,7 @@ async function findInfobipConversationCredentials(senderNumber) {
       const number = onlyDigits(firstNonEmpty(sender.sender, sender.senderNumber, sender.sender_number, sender.phone, sender.number));
       return number && number === target;
     });
-    const fallbackSender = onlyDigits(firstNonEmpty(api.sender_number, api.senderNumber, api.phone_number));
-    if ((target && matchedIntegrated) || (target && fallbackSender === target)) {
+    if (target && matchedIntegrated) {
       return {
         ...api,
         sender_number: target,
