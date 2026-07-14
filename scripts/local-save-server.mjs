@@ -1458,9 +1458,11 @@ async function canReplyWithFreeText(contactPhone, phoneNumberId) {
 
 async function listConversations(params = {}) {
   const messages = await readConversationMessages();
+  const providerFilter = String(params.provider || "").trim().toLowerCase();
   const storedConnected = await getStoredValue("movy.connectedSenders");
   const storedAccounts = await getStoredValue("scaleapi.bmAccounts");
   const storedSettings = await getStoredValue("scaleapi.bmSettings");
+  const infobipApis = providerFilter === "infobip" ? await readInfobipApis() : [];
   const connectedSenders = Array.isArray(storedConnected) ? storedConnected : [];
   const accounts = [
     ...(Array.isArray(storedAccounts) ? storedAccounts : storedAccounts ? [storedAccounts] : []),
@@ -1471,10 +1473,40 @@ async function listConversations(params = {}) {
   const filtered = messages.filter((message) => {
     const haystack = [message.contactPhone, message.senderPhone, message.senderName, message.text, message.status].join(" ").toLowerCase();
     const senderOk = !sender || sender === "all" || String(message.senderPhoneNumberId || "") === sender;
-    return senderOk && (!query || haystack.includes(query));
+    const providerOk = !providerFilter || String(message.provider || "meta").toLowerCase() === providerFilter;
+    return providerOk && senderOk && (!query || haystack.includes(query));
   });
   const conversations = conversationFromMessages(filtered);
-  const accountSenders = accounts.flatMap((account, accountIndex) => {
+  const infobipSenderRows = infobipApis.flatMap((api) => {
+    const integrated = Array.isArray(api.integrated_senders) ? api.integrated_senders : [];
+    const rows = integrated
+      .map((sender) => {
+        const senderNumber = onlyDigits(firstNonEmpty(sender.sender, sender.senderNumber, sender.sender_number, sender.phone, sender.number));
+        if (!senderNumber) return null;
+        return [
+          senderNumber,
+          {
+            id: senderNumber,
+            name: firstNonEmpty(sender.name, api.sender_name, api.name, api.label, "Infobip"),
+            phone: senderNumber,
+          },
+        ];
+      })
+      .filter(Boolean);
+    const fallbackSender = onlyDigits(firstNonEmpty(api.sender_number, api.senderNumber, api.phone_number));
+    if (fallbackSender && !rows.some(([id]) => String(id) === fallbackSender)) {
+      rows.push([
+        fallbackSender,
+        {
+          id: fallbackSender,
+          name: firstNonEmpty(api.sender_name, api.name, api.label, "Infobip"),
+          phone: fallbackSender,
+        },
+      ]);
+    }
+    return rows;
+  });
+  const accountSenders = providerFilter === "infobip" ? [] : accounts.flatMap((account, accountIndex) => {
     const bmName = firstNonEmpty(account.name, account.businessName, account.label, `BM ${accountIndex + 1}`);
     const wabaId = String(account.defaultWabaId || account.wabaId || "");
     const connectedIds = new Set([
@@ -1499,17 +1531,18 @@ async function listConversations(params = {}) {
     return [[fallbackId, { id: fallbackId, name: bmName, phone: account.phoneNumber || account.senderNumber || "" }]];
   });
   const senderRows = [
+    ...infobipSenderRows,
     ...accountSenders,
-    ...connectedSenders.map((sender) => [
+    ...(providerFilter === "infobip" ? [] : connectedSenders.map((sender) => [
       String(sender.phoneNumberId || ""),
       {
         id: String(sender.phoneNumberId || ""),
         name: firstNonEmpty(sender.verifiedName, sender.bmName, "Remetente"),
         phone: sender.phone || "",
       },
-    ]),
+    ])),
     ...messages
-      .filter((message) => message.senderPhoneNumberId)
+      .filter((message) => message.senderPhoneNumberId && (!providerFilter || String(message.provider || "meta").toLowerCase() === providerFilter))
       .map((message) => [
         String(message.senderPhoneNumberId),
         {
@@ -1572,10 +1605,114 @@ async function findSenderCredentials(phoneNumberId) {
   };
 }
 
+async function findInfobipConversationCredentials(senderNumber) {
+  const target = onlyDigits(senderNumber);
+  const apis = await readInfobipApis();
+  for (const api of apis) {
+    const integrated = Array.isArray(api.integrated_senders) ? api.integrated_senders : [];
+    const matchedIntegrated = integrated.find((sender) => {
+      const number = onlyDigits(firstNonEmpty(sender.sender, sender.senderNumber, sender.sender_number, sender.phone, sender.number));
+      return number && number === target;
+    });
+    const fallbackSender = onlyDigits(firstNonEmpty(api.sender_number, api.senderNumber, api.phone_number));
+    if ((target && matchedIntegrated) || (target && fallbackSender === target)) {
+      return {
+        ...api,
+        sender_number: target,
+        sender_name: firstNonEmpty(matchedIntegrated?.name, api.sender_name, api.name, api.label, "Infobip"),
+      };
+    }
+  }
+  return null;
+}
+
+function infobipConversationRequest(mediaKind, from, to, text, mediaUrl, mediaName) {
+  if (!mediaUrl) return { path: "/whatsapp/1/message/text", body: infobipMessageBody(from, to, { text }) };
+  if (mediaKind === "image") return { path: "/whatsapp/1/message/image", body: infobipMessageBody(from, to, { mediaUrl, ...(text ? { caption: text } : {}) }) };
+  if (mediaKind === "video") return { path: "/whatsapp/1/message/video", body: infobipMessageBody(from, to, { mediaUrl, ...(text ? { caption: text } : {}) }) };
+  if (mediaKind === "audio") return { path: "/whatsapp/1/message/audio", body: infobipMessageBody(from, to, { mediaUrl }) };
+  return {
+    path: "/whatsapp/1/message/document",
+    body: infobipMessageBody(from, to, { mediaUrl, fileName: mediaName || "arquivo", ...(text ? { caption: text } : {}) }),
+  };
+}
+
 async function handleConversations(request, response) {
   const url = new URL(request.url || "", `http://${request.headers.host}`);
   if (request.method === "GET" && url.pathname === "/conversations") {
     sendJson(response, 200, await listConversations(Object.fromEntries(url.searchParams.entries())));
+    return true;
+  }
+  if (request.method === "GET" && url.pathname === "/infobip-conversations") {
+    sendJson(response, 200, await listConversations({ ...Object.fromEntries(url.searchParams.entries()), provider: "infobip" }));
+    return true;
+  }
+  if (request.method === "POST" && url.pathname === "/infobip-conversations/send") {
+    const body = JSON.parse((await readRequestBody(request)).toString("utf8") || "{}");
+    const to = normalizeBrazilPhone(body.to || body.contactPhone || "");
+    const text = normalizeTemplateParameterText(String(body.text || "").trim());
+    const mediaUrl = String(body.mediaUrl || body.url || "").trim();
+    const mediaTypeRaw = String(body.mediaType || body.type || "").toLowerCase();
+    const mediaName = String(body.mediaName || body.filename || "arquivo").trim();
+    const senderNumber = onlyDigits(body.phoneNumberId || body.senderPhoneNumberId || body.senderNumber || "");
+    if (!to || (!text && !mediaUrl) || !senderNumber) {
+      sendJson(response, 400, { ok: false, error: "missing-message-fields", message: "Informe remetente, contato e texto." });
+      return true;
+    }
+    const replyWindow = await canReplyWithFreeText(to, senderNumber);
+    if (!replyWindow.ok) {
+      sendJson(response, 400, {
+        ok: false,
+        error: "reply-window-closed",
+        message: "Essa conversa esta fora da janela de 24h. Envie um template pela Infobip para reabrir a conversa.",
+        lastInboundAt: replyWindow.lastInboundAt,
+        canReplyUntil: replyWindow.canReplyUntil,
+      });
+      return true;
+    }
+    const api = await findInfobipConversationCredentials(senderNumber);
+    if (!api?.base_url || !api?.token) {
+      sendJson(response, 400, { ok: false, error: "missing-infobip-credentials", message: "Nao encontrei API Infobip integrada para esse remetente." });
+      return true;
+    }
+    const mediaKind = mediaUrl
+      ? mediaTypeRaw.includes("video")
+        ? "video"
+        : mediaTypeRaw.includes("audio")
+          ? "audio"
+          : mediaTypeRaw.includes("image")
+            ? "image"
+            : "document"
+      : "text";
+    const requestPayload = infobipConversationRequest(mediaKind, senderNumber, to, text, mediaUrl, mediaName);
+    const result = await fetchInfobipJson(api, requestPayload.path, {
+      method: "POST",
+      body: requestPayload.body,
+      timeoutMs: 30000,
+    });
+    const messageId = extractInfobipMessageId(result) || `infobip-out-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const createdAt = new Date().toISOString();
+    await appendConversationMessages([
+      {
+        id: messageId,
+        messageId,
+        provider: "infobip",
+        direction: "outbound",
+        conversationId: conversationIdFor(to, senderNumber),
+        contactPhone: to,
+        recipientPhone: to,
+        senderPhoneNumberId: senderNumber,
+        senderPhone: senderNumber,
+        senderName: firstNonEmpty(api.sender_name, api.name, api.label, "Infobip"),
+        text: text || mediaName,
+        type: mediaKind,
+        status: "accepted",
+        createdAt,
+        updatedAt: createdAt,
+        raw: result,
+      },
+    ]);
+    sendJson(response, 200, { ok: true, messageId });
     return true;
   }
   if (request.method === "POST" && url.pathname === "/conversations/send") {
@@ -2646,6 +2783,7 @@ function normalizeInfobipIncomingMessages(payload) {
       return {
         id: firstNonEmpty(source.messageId, source.message_id, source.id, `infobip-in-${Date.now()}-${Math.random().toString(16).slice(2)}`),
         from: normalizeBrazilPhone(firstNonEmpty(source.from, source.sender, source.contact, source.msisdn)),
+        to: onlyDigits(firstNonEmpty(source.to, source.destination, source.recipient, source.receiver)),
         timestamp: webhookTimestampSeconds(firstNonEmpty(source.receivedAt, source.timestamp)),
         contextId: firstNonEmpty(context.messageId, context.message_id, context.id, callbackData.messageId, source.contextId),
         type: String(source.type || "text"),
@@ -2663,10 +2801,10 @@ function collectInfobipConversationInboundMessages(payload) {
     messageId: message.id,
     provider: "infobip",
     direction: "inbound",
-    conversationId: conversationIdFor(message.from),
+    conversationId: conversationIdFor(message.from, message.to),
     contactPhone: message.from,
-    senderPhoneNumberId: "",
-    senderPhone: "",
+    senderPhoneNumberId: message.to || "",
+    senderPhone: message.to || "",
     senderName: "Infobip",
     text: message.text,
     type: message.type || "text",

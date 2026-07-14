@@ -51,6 +51,7 @@ export function App() {
         <Route path="/broadcast-random" element={<Broadcast mode="random" />} />
         <Route path="/infobip-transmissions" element={<InfobipTransmissions />} />
         <Route path="/conversations" element={<Conversations />} />
+        <Route path="/infobip-conversations" element={<Conversations provider="infobip" />} />
         <Route path="/contatos" element={<Contacts />} />
         <Route path="/flows" element={<Flows provider="meta" />} />
         <Route path="/flows-infobip" element={<Flows provider="infobip" />} />

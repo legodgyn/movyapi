@@ -220,7 +220,32 @@ function mergeSenderOptions(remote: unknown, conversations: Conversation[] = [])
   return Array.from(byId.values());
 }
 
-export function Conversations() {
+function mergeProviderSenderOptions(remote: unknown, conversations: Conversation[] = [], includeLocalMeta = true) {
+  if (includeLocalMeta) return mergeSenderOptions(remote, conversations);
+  const remoteOptions = Array.isArray(remote) ? (remote as SenderOption[]) : [];
+  const byId = new Map<string, SenderOption>();
+  [...remoteOptions, ...conversationSenderOptions(conversations)].forEach((item) => {
+    const id = textOf(item.id);
+    if (!id) return;
+    const current = byId.get(id);
+    byId.set(id, {
+      id,
+      name: textOf(current?.name, item.name, item.phone, "Infobip"),
+      phone: textOf(current?.phone, item.phone),
+    });
+  });
+  return Array.from(byId.values());
+}
+
+type ConversationsProps = {
+  provider?: "meta" | "infobip";
+};
+
+export function Conversations({ provider = "meta" }: ConversationsProps) {
+  const isInfobip = provider === "infobip";
+  const listPath = isInfobip ? "infobip-conversations" : "conversations";
+  const sendPath = isInfobip ? "infobip-conversations/send" : "conversations/send";
+  const providerName = isInfobip ? "Infobip" : "WhatsApp";
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [senders, setSenders] = useState<SenderOption[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -248,7 +273,7 @@ export function Conversations() {
     if (!silent) setLoading(true);
     try {
       const primaryBackendUrl = movyBackendUrl();
-      const url = new URL(`${primaryBackendUrl}/conversations`);
+      const url = new URL(`${primaryBackendUrl}/${listPath}`);
       if (query.trim()) url.searchParams.set("q", query.trim());
       if (senderFilter !== "all") url.searchParams.set("sender", senderFilter);
       const response = await fetch(url);
@@ -257,9 +282,9 @@ export function Conversations() {
       let activeBackendUrl = primaryBackendUrl;
       let nextPayload = payload;
       let next = Array.isArray(nextPayload.conversations) ? nextPayload.conversations : [];
-      let nextSenders = mergeSenderOptions(nextPayload.senders, next);
+      let nextSenders = mergeProviderSenderOptions(nextPayload.senders, next, !isInfobip);
       if (isLocalHost() && !next.length) {
-        const fallbackUrl = new URL(`${productionBackendUrl()}/conversations`);
+        const fallbackUrl = new URL(`${productionBackendUrl()}/${listPath}`);
         if (query.trim()) fallbackUrl.searchParams.set("q", query.trim());
         if (senderFilter !== "all") fallbackUrl.searchParams.set("sender", senderFilter);
         const fallbackResponse = await fetch(fallbackUrl);
@@ -268,14 +293,14 @@ export function Conversations() {
           activeBackendUrl = productionBackendUrl();
           nextPayload = fallbackPayload;
           next = Array.isArray(nextPayload.conversations) ? nextPayload.conversations : [];
-          nextSenders = mergeSenderOptions(nextPayload.senders, next);
+          nextSenders = mergeProviderSenderOptions(nextPayload.senders, next, !isInfobip);
         }
       }
       setConversationBackendUrl(activeBackendUrl);
       setConversations(next);
       setSenders(nextSenders);
       setSelectedId((current) => (current && next.some((item: Conversation) => item.id === current) ? current : next[0]?.id || ""));
-      setStatus(next.length ? "" : "Nenhuma conversa encontrada ainda. As novas mensagens chegam aqui pelo webhook.");
+      setStatus(next.length ? "" : `Nenhuma conversa ${isInfobip ? "Infobip" : "Meta"} encontrada ainda. As novas mensagens chegam aqui pelo webhook.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Nao foi possivel carregar conversas.");
     } finally {
@@ -313,7 +338,7 @@ export function Conversations() {
     setSending(true);
     try {
       const uploaded = attachment ? await uploadAttachment(attachment) : null;
-      const response = await fetch(`${conversationBackendUrl}/conversations/send`, {
+      const response = await fetch(`${conversationBackendUrl}/${sendPath}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -393,7 +418,7 @@ export function Conversations() {
                 <span className="conversation-list-copy">
                   <strong>{phoneMask(conversation.contactPhone)}</strong>
                   <small>{conversation.lastMessage || "Sem mensagens"}</small>
-                  <em>{statusLabel(conversation.lastStatus)} - WhatsApp</em>
+                  <em>{statusLabel(conversation.lastStatus)} - {providerName}</em>
                 </span>
                 <span className="conversation-list-meta">
                   <small>{shortTime(conversation.lastAt)}</small>
@@ -405,7 +430,7 @@ export function Conversations() {
               <div className="conversation-list-empty">
                 <MessageCircle size={18} />
                 <strong>Nenhuma conversa ainda</strong>
-                <span>As respostas do webhook aparecem aqui.</span>
+                <span>As respostas do webhook {providerName} aparecem aqui.</span>
               </div>
             ) : null}
           </div>
@@ -555,7 +580,7 @@ export function Conversations() {
               Historico
             </div>
             <div className="conversation-history-item">
-              <strong>Webhook conectado</strong>
+              <strong>Webhook {providerName} conectado</strong>
               <span>Respostas e status entram automaticamente.</span>
             </div>
             <div className="conversation-history-item">

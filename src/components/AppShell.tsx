@@ -53,6 +53,10 @@ const titles: Record<string, { title: string; description: string }> = {
     title: "Conversas",
     description: "Inbox por remetente com respostas e status do webhook",
   },
+  "/infobip-conversations": {
+    title: "Conversas Infobip",
+    description: "Inbox por remetente com respostas e status do webhook Infobip",
+  },
   "/contatos": {
     title: "Contatos",
     description: "Gerencie seus contatos e tags",

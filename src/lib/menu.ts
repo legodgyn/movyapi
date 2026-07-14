@@ -32,6 +32,7 @@ export const menuSections = [
       { label: "Broadcast Randomico", path: "/broadcast-random", icon: Megaphone },
       { label: "Transmissoes Infobip", path: "/infobip-transmissions", icon: Megaphone },
       { label: "Conversas", path: "/conversations", icon: MessageCircle },
+      { label: "Conversas Infobip", path: "/infobip-conversations", icon: MessageCircle },
       { label: "Flow META", path: "/flows", icon: Workflow },
       { label: "Flow Infobip", path: "/flows-infobip", icon: Workflow },
     ],
