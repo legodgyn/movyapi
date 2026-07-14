@@ -4100,6 +4100,18 @@ a {
   color: hsl(var(--primary-foreground));
 }
 
+.media-tab span {
+  align-items: center;
+  background: hsl(var(--primary-foreground) / .16);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 11px;
+  justify-content: center;
+  margin-left: 8px;
+  min-width: 22px;
+  padding: 3px 7px;
+}
+
 .media-upload-card,
 .media-library-card {
   display: grid;
@@ -4110,6 +4122,37 @@ a {
 .media-library-card h3 {
   font-size: 20px;
   margin: 0;
+}
+
+.media-library-head {
+  align-items: end;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.media-library-head .hint {
+  margin: 8px 0 0;
+}
+
+.media-pagination-controls {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.media-pagination-controls span {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.media-page-size {
+  font-size: 12px;
+  height: 38px;
+  min-width: 145px;
+  padding: 0 12px;
 }
 
 .media-dropzone {
@@ -4279,6 +4322,34 @@ a {
   gap: 10px;
   justify-content: center;
   min-height: 130px;
+}
+
+.media-pagination {
+  align-items: center;
+  border-top: 1px solid hsl(var(--border));
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  padding-top: 14px;
+}
+
+.media-pagination strong {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  min-width: 110px;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .media-library-head,
+  .media-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .media-pagination-controls {
+    justify-content: space-between;
+  }
 }
 
 .contacts-page {

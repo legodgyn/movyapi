@@ -1,5 +1,5 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Clipboard, Download, FileAudio, FileImage, FileVideo, Image, Trash2, Upload } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clipboard, Download, FileAudio, FileImage, FileVideo, Image, Trash2, Upload } from "lucide-react";
 import { config } from "../lib/config";
 import { formatBytes, formatDate, labelOf } from "../lib/format";
 import { media as mediaService } from "../lib/services";
@@ -162,6 +162,8 @@ export function Media() {
   const [status, setStatus] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [copiedItemId, setCopiedItemId] = useState<string | null>(null);
+  const [libraryPage, setLibraryPage] = useState(1);
+  const [libraryPageSize, setLibraryPageSize] = useState(10);
   const copyFeedbackTimeout = useRef<number | null>(null);
 
   const stats = useMemo(
@@ -172,6 +174,11 @@ export function Media() {
     ],
     [],
   );
+
+  const totalLibraryPages = Math.max(1, Math.ceil(items.length / libraryPageSize));
+  const visibleLibraryItems = items.slice((libraryPage - 1) * libraryPageSize, libraryPage * libraryPageSize);
+  const libraryStart = items.length ? (libraryPage - 1) * libraryPageSize + 1 : 0;
+  const libraryEnd = Math.min(items.length, libraryPage * libraryPageSize);
 
   async function load() {
     const list = await readMediaLibrary();
@@ -261,6 +268,10 @@ export function Media() {
   }, []);
 
   useEffect(() => {
+    setLibraryPage((current) => Math.min(Math.max(1, current), totalLibraryPages));
+  }, [totalLibraryPages]);
+
+  useEffect(() => {
     return () => {
       if (copyFeedbackTimeout.current) {
         window.clearTimeout(copyFeedbackTimeout.current);
@@ -285,7 +296,7 @@ export function Media() {
           Upload
         </button>
         <button className={activeTab === "library" ? "media-tab active" : "media-tab"} onClick={() => setActiveTab("library")}>
-          Minhas Midias
+          Minhas Midias {items.length ? <span>{items.length}</span> : null}
         </button>
       </div>
 
@@ -322,11 +333,30 @@ export function Media() {
         </>
       ) : (
         <section className="card media-library-card">
-          <h3>Minhas Midias</h3>
-          <p className="hint">Seus arquivos enviados. Clique no icone de copiar para obter o link direto.</p>
+          <div className="media-library-head">
+            <div>
+              <h3>Minhas Midias</h3>
+              <p className="hint">Seus arquivos enviados. Clique no icone de copiar para obter o link direto.</p>
+            </div>
+            <div className="media-pagination-controls">
+              <span>{items.length ? `${libraryStart}-${libraryEnd} de ${items.length}` : "0 midias"}</span>
+              <select
+                className="input media-page-size"
+                onChange={(event) => {
+                  setLibraryPageSize(Number(event.target.value));
+                  setLibraryPage(1);
+                }}
+                value={libraryPageSize}
+              >
+                <option value={10}>10 por pagina</option>
+                <option value={20}>20 por pagina</option>
+                <option value={50}>50 por pagina</option>
+              </select>
+            </div>
+          </div>
 
           <div className="media-list">
-            {items.map((item) => {
+            {visibleLibraryItems.map((item) => {
               const url = mediaUrl(item);
               const kind = mediaKind(item.type);
               return (
@@ -372,6 +402,28 @@ export function Media() {
               </div>
             ) : null}
           </div>
+
+          {items.length > libraryPageSize ? (
+            <div className="media-pagination">
+              <button
+                className="button secondary compact"
+                disabled={libraryPage <= 1}
+                onClick={() => setLibraryPage((page) => Math.max(1, page - 1))}
+                type="button"
+              >
+                <ChevronLeft size={15} /> Anterior
+              </button>
+              <strong>Pagina {libraryPage} de {totalLibraryPages}</strong>
+              <button
+                className="button secondary compact"
+                disabled={libraryPage >= totalLibraryPages}
+                onClick={() => setLibraryPage((page) => Math.min(totalLibraryPages, page + 1))}
+                type="button"
+              >
+                Proxima <ChevronRight size={15} />
+              </button>
+            </div>
+          ) : null}
         </section>
       )}
 
