@@ -2302,15 +2302,15 @@ a {
 }
 
 .api-sender-row {
-  align-items: center;
+  align-items: start;
   background: hsl(var(--md-surface-container-low) / .72);
   border: 1px solid hsl(var(--md-outline-variant));
   border-radius: 9px;
   display: grid;
   gap: 12px;
   grid-template-columns: 34px minmax(0, 1fr) auto;
-  min-height: 54px;
-  padding: 8px 10px;
+  min-height: 66px;
+  padding: 11px 12px;
 }
 
 .api-sender-row.integrated {
@@ -2320,23 +2320,23 @@ a {
 
 .api-sender-row div {
   display: grid;
-  gap: 3px;
+  gap: 5px;
   min-width: 0;
 }
 
 .api-sender-row strong {
   color: hsl(var(--foreground));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .api-sender-row span:not(.api-connection-icon) {
   color: hsl(var(--muted-foreground));
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .api-sender-row .button {
@@ -2552,7 +2552,7 @@ a {
   align-items: start;
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  grid-template-columns: 1fr;
 }
 
 .api-sender-panel {
@@ -2592,6 +2592,10 @@ a {
 
 .api-integrated-panel .api-integrated-scroll {
   max-height: min(60vh, 620px);
+}
+
+.api-integrated-panel .api-integrated-scroll {
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
 }
 
 @media (max-width: 1180px) {

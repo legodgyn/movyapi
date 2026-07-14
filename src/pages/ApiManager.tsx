@@ -430,7 +430,7 @@ export function ApiManager() {
                           <span className="api-connection-icon"><Smartphone size={16} /></span>
                           <div>
                             <strong>{senderLabel(option)}</strong>
-                            <span>{option.channel || "WhatsApp"} - {option.status}</span>
+                            <span>{option.sender || "Sem numero"} - {option.channel || "WhatsApp"} - {option.status}</span>
                           </div>
                           <button className="button compact" disabled={isIntegrated} type="button" onClick={() => integrateSender(option)}>
                             <Link2 size={14} /> {isIntegrated ? "Integrado" : "Integrar"}
@@ -463,7 +463,7 @@ export function ApiManager() {
                         <span className="api-connection-icon"><CheckCircle2 size={16} /></span>
                         <div>
                           <strong>{senderLabel(item)}</strong>
-                          <span>{item.apiName} - pronto para uso</span>
+                          <span>{item.sender || "Sem numero"} - {item.apiName} - pronto para uso</span>
                         </div>
                         <button className="button secondary compact" type="button" onClick={() => removeIntegratedSender(item)}>Remover</button>
                       </div>
