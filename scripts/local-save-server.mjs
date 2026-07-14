@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -3183,6 +3183,21 @@ function uploadExtension(contentType, fallbackName) {
   return match ? match[0].toLowerCase() : ".bin";
 }
 
+function mediaContentTypeFromName(filename) {
+  const extension = String(filename || "").split(".").pop()?.toLowerCase();
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+  if (extension === "gif") return "image/gif";
+  if (extension === "mp4") return "video/mp4";
+  if (extension === "webm") return "video/webm";
+  if (extension === "ogg") return "audio/ogg";
+  if (extension === "mp3") return "audio/mpeg";
+  if (extension === "wav") return "audio/wav";
+  if (extension === "pdf") return "application/pdf";
+  return "application/octet-stream";
+}
+
 function safeUploadName(name) {
   return String(name || "midia")
     .normalize("NFD")
@@ -3269,6 +3284,41 @@ async function serveMediaFile(request, response) {
     response.end(bytes);
   } catch {
     sendJson(response, 404, { ok: false, error: "media-file-not-found" });
+  }
+}
+
+async function listMediaFiles(response) {
+  try {
+    await mkdir(uploadsDir, { recursive: true });
+    const names = await readdir(uploadsDir);
+    const files = [];
+    for (const name of names) {
+      const filename = safeUploadName(name);
+      if (!filename || filename !== name) continue;
+      try {
+        const filePath = join(uploadsDir, filename);
+        const info = await stat(filePath);
+        if (!info.isFile()) continue;
+        files.push({
+          id: `file-${filename}`,
+          name: filename.replace(/^\d+-[a-f0-9]+-/i, ""),
+          file_name: filename,
+          type: mediaContentTypeFromName(filename),
+          size: info.size,
+          storagePath: `/media/files/${encodeURIComponent(filename)}`,
+          url: `/media/files/${encodeURIComponent(filename)}`,
+          public_url: `/media/files/${encodeURIComponent(filename)}`,
+          created_at: info.birthtime?.toISOString?.() || info.mtime.toISOString(),
+          updated_at: info.mtime.toISOString(),
+        });
+      } catch {
+        // Ignore files that disappear while the list is being built.
+      }
+    }
+    files.sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime());
+    sendJson(response, 200, { ok: true, items: files, media: files });
+  } catch (error) {
+    sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : "media-list-failed" });
   }
 }
 
@@ -3367,6 +3417,11 @@ createServer(async (request, response) => {
 
   if (request.method === "POST" && request.url === "/media/upload") {
     await saveMediaUpload(request, response);
+    return;
+  }
+
+  if (request.method === "GET" && request.url?.startsWith("/media/library")) {
+    await listMediaFiles(response);
     return;
   }
 

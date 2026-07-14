@@ -121,6 +121,15 @@ async function uploadToLocalBackend(file: File) {
 async function readMediaLibrary() {
   const sources: LocalMediaItem[][] = [];
 
+  try {
+    const response = await fetch(`${backendUrl()}/media/library`);
+    const payload = await response.json().catch(() => ({}));
+    const value = Array.isArray(payload.items) ? payload.items : Array.isArray(payload.media) ? payload.media : [];
+    sources.push(value as LocalMediaItem[]);
+  } catch {
+    // Older local APIs may not expose the physical media library endpoint.
+  }
+
   await mediaService.normalizedList()
     .then((value) => {
       if (Array.isArray(value)) sources.push(value as LocalMediaItem[]);
