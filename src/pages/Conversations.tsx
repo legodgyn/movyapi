@@ -274,20 +274,23 @@ export function Conversations({ provider = "meta" }: ConversationsProps) {
     try {
       const primaryBackendUrl = movyBackendUrl();
       const url = new URL(`${primaryBackendUrl}/${listPath}`);
+      url.searchParams.set("_", String(Date.now()));
       if (query.trim()) url.searchParams.set("q", query.trim());
       if (senderFilter !== "all") url.searchParams.set("sender", senderFilter);
-      const response = await fetch(url);
+      const response = await fetch(url, { cache: "no-store" });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `Conversas HTTP ${response.status}`);
       let activeBackendUrl = primaryBackendUrl;
       let nextPayload = payload;
       let next = Array.isArray(nextPayload.conversations) ? nextPayload.conversations : [];
       let nextSenders = mergeProviderSenderOptions(nextPayload.senders, next, !isInfobip);
-      if (isLocalHost() && !next.length) {
+      const fallbackBackendUrl = productionBackendUrl();
+      if (!next.length && (isLocalHost() || primaryBackendUrl !== fallbackBackendUrl)) {
         const fallbackUrl = new URL(`${productionBackendUrl()}/${listPath}`);
+        fallbackUrl.searchParams.set("_", String(Date.now()));
         if (query.trim()) fallbackUrl.searchParams.set("q", query.trim());
         if (senderFilter !== "all") fallbackUrl.searchParams.set("sender", senderFilter);
-        const fallbackResponse = await fetch(fallbackUrl);
+        const fallbackResponse = await fetch(fallbackUrl, { cache: "no-store" });
         const fallbackPayload = await fallbackResponse.json().catch(() => ({}));
         if (fallbackResponse.ok) {
           activeBackendUrl = productionBackendUrl();
