@@ -3607,7 +3607,7 @@ createServer(async (request, response) => {
     return;
   }
 
-  if (request.url?.startsWith("/conversations")) {
+  if (request.url?.startsWith("/conversations") || request.url?.startsWith("/infobip-conversations")) {
     if (await handleConversations(request, response)) return;
   }
 
