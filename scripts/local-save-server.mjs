@@ -454,16 +454,22 @@ async function writeFileStorage(store) {
 
 async function runSqlite(args) {
   await mkdir(dirname(databasePath), { recursive: true });
-  try {
-    const { stdout } = await execFileAsync("sqlite3", [databasePath, ...args], {
-      maxBuffer: 100 * 1024 * 1024,
-      windowsHide: true,
-    });
-    return stdout;
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw error;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      const { stdout } = await execFileAsync("sqlite3", ["-cmd", ".timeout 8000", databasePath, ...args], {
+        maxBuffer: 100 * 1024 * 1024,
+        windowsHide: true,
+        timeout: 20000,
+      });
+      return stdout;
+    } catch (error) {
+      if (error?.code === "ENOENT") return null;
+      const locked = String(error?.stderr || error?.message || "").toLowerCase().includes("database is locked");
+      if (!locked || attempt === 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
   }
+  return "";
 }
 
 function sqliteDotPath(value) {
