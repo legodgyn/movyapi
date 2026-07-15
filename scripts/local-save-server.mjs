@@ -452,7 +452,10 @@ async function writeFileStorage(store) {
   await writeFile(storageFilePath, JSON.stringify(store, null, 2), "utf8");
 }
 
-async function runSqlite(args) {
+let sqliteQueue = Promise.resolve();
+let databaseReady = null;
+
+async function runSqliteDirect(args) {
   await mkdir(dirname(databasePath), { recursive: true });
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
@@ -470,6 +473,12 @@ async function runSqlite(args) {
     }
   }
   return "";
+}
+
+async function runSqlite(args) {
+  const task = sqliteQueue.then(() => runSqliteDirect(args), () => runSqliteDirect(args));
+  sqliteQueue = task.catch(() => null);
+  return task;
 }
 
 function sqliteDotPath(value) {
@@ -492,10 +501,17 @@ function sqlValue(value) {
 }
 
 async function ensureDatabase() {
-  const result = await runSqlite([
-    "create table if not exists app_storage (key text primary key, value text not null, updated_at text not null);",
-  ]);
-  return result !== null;
+  if (!databaseReady) {
+    databaseReady = runSqlite([
+      "pragma journal_mode=wal; create table if not exists app_storage (key text primary key, value text not null, updated_at text not null);",
+    ])
+      .then((result) => result !== null)
+      .catch((error) => {
+        databaseReady = null;
+        throw error;
+      });
+  }
+  return databaseReady;
 }
 
 async function getStoredValue(key) {
