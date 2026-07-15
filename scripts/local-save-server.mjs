@@ -454,6 +454,7 @@ async function writeFileStorage(store) {
 
 let sqliteQueue = Promise.resolve();
 let databaseReady = null;
+const storageCache = new Map();
 
 async function runSqliteDirect(args) {
   await mkdir(dirname(databasePath), { recursive: true });
@@ -515,17 +516,25 @@ async function ensureDatabase() {
 }
 
 async function getStoredValue(key) {
+  if (storageCache.has(key)) return storageCache.get(key);
+
   if (await ensureDatabase()) {
     const output = await runSqlite(["-json", `select value from app_storage where key = ${sqlValue(key)} limit 1;`]);
     const rows = output ? JSON.parse(output || "[]") : [];
-    return rows[0]?.value ? JSON.parse(rows[0].value) : null;
+    const value = rows[0]?.value ? JSON.parse(rows[0].value) : null;
+    storageCache.set(key, value);
+    return value;
   }
 
   const store = await readFileStorage();
-  return store[key] ?? null;
+  const value = store[key] ?? null;
+  storageCache.set(key, value);
+  return value;
 }
 
 async function setStoredValue(key, value) {
+  storageCache.set(key, value);
+
   if (await ensureDatabase()) {
     const sql = `insert into app_storage (key, value, updated_at) values (${sqlValue(key)}, ${sqlValue(JSON.stringify(value))}, ${sqlValue(new Date().toISOString())}) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at;`;
     if (sql.length > 100000) await runSqliteScript(sql);
