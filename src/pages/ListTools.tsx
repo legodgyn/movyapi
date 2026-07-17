@@ -6,7 +6,6 @@ import { config } from "../lib/config";
 import { contacts } from "../lib/services";
 
 const LOCAL_CONTACTS_KEY = "scaleapi.localContacts";
-const CHECKNUMBER_API_BASE = `${config.localBackendUrl.replace(/\/$/, "")}/checknumber`;
 const TREAT_LIST_CHECK_SESSION_KEY = "movy.treatListCheckSession";
 const TREAT_LIST_CHECK_HISTORY_KEY = "movy.treatListCheckHistory";
 const TREAT_LIST_CHECK_HISTORY_LIMIT = 8;
@@ -248,9 +247,9 @@ function extractTask(payload: unknown): CheckNumberTask | undefined {
 async function checkNumberRequest(path: string, init: RequestInit = {}) {
   let response: Response;
   try {
-    response = await fetch(`${CHECKNUMBER_API_BASE}${path}`, init);
+    response = await fetch(`${checkNumberApiBase()}${path}`, init);
   } catch {
-    throw new Error("Servidor local da CheckNumber offline. Reinicie o projeto para ativar a validacao.");
+    throw new Error("Servidor da CheckNumber indisponivel. Tente novamente em instantes.");
   }
 
   const text = await response.text();
@@ -485,7 +484,7 @@ async function saveCsvToDisk(csv: string, filename: string) {
 }
 
 async function saveCsvLocally(csv: string, filename: string) {
-  const response = await fetch(`${config.localBackendUrl.replace(/\/$/, "")}/save-csv`, {
+  const response = await fetch(`${movyBackendUrl()}/save-csv`, {
     body: JSON.stringify({ csv, filename }),
     headers: { "Content-Type": "application/json" },
     method: "POST",
@@ -549,13 +548,19 @@ function publishRowsToContacts(rows: ListRow[]) {
 }
 
 function movyBackendUrl() {
-  const configured = config.mediaBackendUrl || config.localBackendUrl;
+  if (typeof window !== "undefined" && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname)) {
+    return config.localBackendUrl.replace(/\/$/, "");
+  }
+  if (typeof window !== "undefined" && window.location.origin) {
+    return `${window.location.origin.replace(/\/$/, "")}/local-api`;
+  }
+  const configured = config.mediaBackendUrl || `${config.publicAppUrl.replace(/\/$/, "")}/local-api`;
   if (/^https?:\/\//i.test(configured)) return configured.replace(/\/$/, "");
-  const origin =
-    typeof window !== "undefined" && window.location.origin && !window.location.origin.includes("localhost")
-      ? window.location.origin
-      : config.publicAppUrl;
-  return `${origin.replace(/\/$/, "")}/${configured.replace(/^\/+|\/+$/g, "")}`;
+  return `${config.publicAppUrl.replace(/\/$/, "")}/${configured.replace(/^\/+|\/+$/g, "")}`;
+}
+
+function checkNumberApiBase() {
+  return `${movyBackendUrl()}/checknumber`;
 }
 
 function asRecord(value: unknown) {
@@ -1158,7 +1163,7 @@ function TreatListPage() {
       });
 
       const resultUrl = exportedTask.result_url || exportedTask.resultUrl || exportedTask.url || "";
-      const resultResponse = await fetch(`${CHECKNUMBER_API_BASE}/result?url=${encodeURIComponent(resultUrl)}`);
+      const resultResponse = await fetch(`${checkNumberApiBase()}/result?url=${encodeURIComponent(resultUrl)}`);
       if (!resultResponse.ok) throw new Error(`Falha ao baixar resultado HTTP ${resultResponse.status}.`);
 
       const resultBlob = await resultResponse.blob();
