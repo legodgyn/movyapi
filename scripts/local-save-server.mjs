@@ -34,7 +34,14 @@ const databasePath = process.env.MOVY_DB_PATH || join(process.cwd(), "data", "mo
 const storageFilePath = process.env.MOVY_STORAGE_FILE || join(process.cwd(), "data", "storage.json");
 const uploadsDir = process.env.MOVY_UPLOADS_DIR || join(process.cwd(), "data", "uploads");
 const checkNumberBaseUrl = "https://api.checknumber.ai/v1";
-const sms24hBaseUrl = process.env.SMS24H_API_BASE_URL || "https://api.sms24h.org/stubs/handler_api";
+const sms24hBaseUrls = (process.env.SMS24H_API_BASE_URLS || process.env.SMS24H_API_BASE_URL || "")
+  .split(",")
+  .map((url) => url.trim())
+  .filter(Boolean);
+const sms24hBaseFallbacks = sms24hBaseUrls.length
+  ? sms24hBaseUrls
+  : ["https://api.sms24h.org/stubs/handler_api", "https://sms24.org/stubs/handler_api.php"];
+const sms24hTimeoutMs = Number(process.env.SMS24H_TIMEOUT_MS || 8000);
 const sisbratelBaseUrl = process.env.SISBRATEL_API_BASE_URL || "https://app.sisbratel.com/api/external";
 const whatsappStatuses = new Map();
 const WHATSAPP_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -104,8 +111,8 @@ const sms24hErrorMessages = {
   STATUS_WAIT_RETRY: "Aguardando novo SMS.",
 };
 
-function sms24hUrl(params) {
-  const url = new URL(sms24hBaseUrl);
+function sms24hUrl(baseUrl, params) {
+  const url = new URL(baseUrl);
   url.searchParams.set("api_key", sms24hApiKey);
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
@@ -115,20 +122,82 @@ function sms24hUrl(params) {
 
 function parseSms24hText(raw) {
   const text = String(raw || "").trim();
+  if (!text) {
+    return { ok: false, status: "EMPTY_RESPONSE", message: "SMS24h retornou resposta vazia.", raw: text };
+  }
   if (text.startsWith("ACCESS_BALANCE:")) {
     return { ok: true, status: "balance", balance: Number(text.split(":")[1] || 0), raw: text };
   }
   if (text.startsWith("ACCESS_NUMBER:")) {
-    const [, id, number] = text.split(":");
+    const match = text.match(/^ACCESS_NUMBER:(\d+):(\d+)/);
+    const id = match?.[1] || "";
+    const number = match?.[2] || "";
     return { ok: true, status: "number", id, number, raw: text };
   }
   if (text.startsWith("STATUS_OK:")) {
     return { ok: true, status: "code", code: text.slice("STATUS_OK:".length).trim(), raw: text };
   }
+  if (text.startsWith("STATUS_WAIT_RETRY:")) {
+    return { ok: true, status: "STATUS_WAIT_RETRY", code: text.slice("STATUS_WAIT_RETRY:".length).trim(), message: sms24hErrorMessages.STATUS_WAIT_RETRY, raw: text };
+  }
   if (sms24hErrorMessages[text]) {
     return { ok: !text.startsWith("BAD_") && !text.startsWith("NO_"), status: text, message: sms24hErrorMessages[text], raw: text };
   }
+  if (["ACCESS_READY", "ACCESS_RETRY_GET", "ACCESS_ACTIVATION", "ACCESS_CANCEL"].includes(text)) {
+    return { ok: true, status: text, raw: text };
+  }
   return { ok: true, status: "raw", raw: text };
+}
+
+function safeJson(raw) {
+  const text = String(raw || "").trim();
+  if (!text || text.startsWith("<")) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function isCloudflareHtml(raw) {
+  const text = String(raw || "").trim().toLowerCase();
+  return text.startsWith("<!doctype html") || text.startsWith("<html") || text.includes("cloudflare");
+}
+
+async function callSms24hOnce(baseUrl, params) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), sms24hTimeoutMs);
+  try {
+    const upstream = await fetch(sms24hUrl(baseUrl, params), {
+      headers: {
+        Accept: "text/plain, application/json, */*",
+        "User-Agent": "MovyApi/1.0 (+https://movyapi.com.br)",
+      },
+      signal: controller.signal,
+    });
+    const raw = (await upstream.text()).trim();
+    if (!upstream.ok) {
+      const error = new Error(
+        raw || `SMS24h retornou HTTP ${upstream.status} em ${new URL(baseUrl).host}.`
+      );
+      error.statusCode = upstream.status;
+      error.raw = raw;
+      error.baseUrl = baseUrl;
+      throw error;
+    }
+    if (!raw || isCloudflareHtml(raw)) {
+      const error = new Error(raw ? `SMS24h retornou HTML em ${new URL(baseUrl).host}.` : `SMS24h retornou resposta vazia em ${new URL(baseUrl).host}.`);
+      error.statusCode = 502;
+      error.raw = raw;
+      error.baseUrl = baseUrl;
+      throw error;
+    }
+    const json = safeJson(raw);
+    const parsed = json ?? parseSms24hText(raw);
+    return { upstreamStatus: upstream.status, raw, parsed, baseUrl };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function callSms24h(params) {
@@ -137,27 +206,45 @@ async function callSms24h(params) {
     error.statusCode = 500;
     throw error;
   }
-  const upstream = await fetch(sms24hUrl(params), {
-    headers: {
-      Accept: "text/plain, application/json, */*",
-      "User-Agent": "Mozilla/5.0 MovyApi/1.0",
-    },
-  });
-  const raw = await upstream.text();
-  if (!upstream.ok) {
-    const error = new Error(
-      raw?.trim() || `SMS24h retornou HTTP ${upstream.status}. Tente novamente ou confirme se a API aceita chamadas da VPS.`
-    );
-    error.statusCode = upstream.status;
-    throw error;
+  let lastError = null;
+  const attempts = [];
+  for (const baseUrl of sms24hBaseFallbacks) {
+    try {
+      return await callSms24hOnce(baseUrl, params);
+    } catch (error) {
+      lastError = error;
+      attempts.push(`${new URL(baseUrl).host}: ${error?.cause?.code || error?.message || "falha"}`);
+    }
   }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    parsed = parseSms24hText(raw);
+  const error = new Error(`SMS24h sem resposta. Tentativas: ${attempts.join(" | ")}`);
+  error.statusCode = lastError?.statusCode || 502;
+  throw error;
+}
+
+function sms24hServiceStock(stock, service = "wa") {
+  if (!stock || typeof stock !== "object" || Array.isArray(stock)) return 0;
+  return Object.entries(stock).reduce((total, [key, value]) => {
+    if (key.split("_")[0] !== service) return total;
+    const amount = Number(value);
+    return total + (Number.isFinite(amount) ? amount : 0);
+  }, 0);
+}
+
+function sms24hServicePrice(prices, country = "73", service = "wa") {
+  const servicePrices = prices?.[country]?.[service];
+  if (!servicePrices || typeof servicePrices !== "object" || Array.isArray(servicePrices)) {
+    return { price: 0, count: 0 };
   }
-  return { upstreamStatus: upstream.status, raw, parsed };
+  const rows = Object.entries(servicePrices)
+    .map(([price, count]) => ({ price: Number(price), count: Number(count) }))
+    .filter((row) => Number.isFinite(row.price) && Number.isFinite(row.count));
+  if (!rows.length) return { price: 0, count: 0 };
+  const availableRows = rows.filter((row) => row.count > 0);
+  const cheapest = (availableRows.length ? availableRows : rows).sort((a, b) => a.price - b.price)[0];
+  return {
+    price: cheapest.price,
+    count: rows.reduce((total, row) => total + row.count, 0),
+  };
 }
 
 async function handleSms24h(request, response) {
@@ -170,17 +257,21 @@ async function handleSms24h(request, response) {
     }
 
     if (request.method === "GET" && url.pathname === "/sms24h/stock") {
-      const statusResult = await callSms24h({ action: "getNumbersStatus", country: "73", operator: "any" });
-      const priceResult = await callSms24h({ action: "getPrices", country: "73", service: "wa" });
+      const [statusResult, priceResult] = await Promise.all([
+        callSms24h({ action: "getNumbersStatus", country: "73" }),
+        callSms24h({ action: "getPrices", country: "73" }),
+      ]);
       const stock = typeof statusResult.parsed === "object" && !Array.isArray(statusResult.parsed) ? statusResult.parsed : {};
       const prices = typeof priceResult.parsed === "object" && !Array.isArray(priceResult.parsed) ? priceResult.parsed : {};
+      const priceSummary = sms24hServicePrice(prices, "73", "wa");
       sendJson(response, 200, {
         ok: true,
         service: "wa",
         country: "73",
-        available: Number(stock.wa_0 || 0),
-        price: Number(prices?.["73"]?.wa?.cost || 0),
-        count: Number(prices?.["73"]?.wa?.count || 0),
+        currency: "RUB",
+        available: sms24hServiceStock(stock, "wa"),
+        price: priceSummary.price,
+        count: priceSummary.count,
         stock,
         prices,
       });
@@ -211,7 +302,12 @@ async function handleSms24h(request, response) {
     const orderMatch = url.pathname.match(/^\/sms24h\/orders\/([^/]+)$/);
     if (request.method === "GET" && orderMatch) {
       const result = await callSms24h({ action: "getStatus", id: orderMatch[1] });
-      sendJson(response, result.upstreamStatus, { ok: result.upstreamStatus < 400, id: orderMatch[1], ...result.parsed });
+      let finalized = false;
+      if (result.parsed?.status === "code") {
+        await callSms24h({ action: "setStatus", status: "6", id: orderMatch[1] });
+        finalized = true;
+      }
+      sendJson(response, result.upstreamStatus, { ok: result.upstreamStatus < 400, id: orderMatch[1], finalized, ...result.parsed });
       return;
     }
 
